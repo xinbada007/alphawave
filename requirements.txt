@@ -1,0 +1,21 @@
+# AlphaFlow Core Dependencies
+pandas>=2.0.0
+pydantic>=2.0.0
+requests>=2.31.0
+urllib3>=2.0.0
+httpx>=0.24.0
+
+# OpenBB Platform v4 (Core & Key Extensions)
+openbb>=4.1.0
+openbb-yfinance>=1.0.0
+openbb-equity>=1.0.0
+openbb-technical>=1.0.0
+
+# Visualization & Networking Support
+# PySocks is mandatory for SOCKS5 proxy support in requests
+PySocks>=1.7.1
+
+# Utilities
+tabulate>=0.9.0
+aiohttp>=3.8.0
+python-dotenv>=1.0.0
