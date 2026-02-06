@@ -51,6 +51,22 @@ if pack is None:
 ### 3.4 代理与环境
 - 框架自动处理 `ALPHAFLOW_PROXY` (SOCKS5)。网络请求（requests/httpx/obb）将自动识别，无需在组件内硬编码代理。
 
+### 3.5 API轮询与频率限制
+- **API轮询**: 对于需要API密钥的外部服务，必须使用 `alphaflow.utils.api_rotator` 中的函数进行API密钥轮询，避免频率限制。
+- **轮询函数**:
+  ```python
+  from alphaflow.utils.api_rotator import get_api_key, report_api_usage
+  
+  # 获取轮询后的API密钥
+  api_key = get_api_key('provider_name', api_type='specific_type')
+  if api_key:
+      # 使用API密钥进行调用
+      # ...
+      # 报告使用情况
+      report_api_usage('provider_name', api_key, success=True)
+  ```
+- **错误处理**: API调用失败时应报告使用情况并采用静默失败策略。
+
 ---
 
 ## 4. 组件开发模板 (Blueprints)
