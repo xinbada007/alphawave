@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""
+修改版的运行脚本，强制使用特定提供商
+"""
+
 import asyncio
 import argparse
 import json
@@ -7,25 +12,16 @@ from alphaflow.engine.pipeline import ResearchPipeline
 from alphaflow.components.collectors.basic import OpenBBCollector
 from alphaflow.components.processors.technicals import RSIProcessor
 from alphaflow.components.visualizers.charting import QuickChartVisualizer
-from alphaflow.utils.user_config import config_manager
-
 
 async def main():
-    parser = argparse.ArgumentParser(description="AlphaFlow CLI")
+    parser = argparse.ArgumentParser(description="AlphaFlow CLI with Provider Selection")
     parser.add_argument("--symbols", nargs="+", default=["AAPL"], help="List of symbols")
+    parser.add_argument("--provider", type=str, default="yfinance", choices=["yfinance", "polygon", "fmp", "av"], help="Data provider to use")
     parser.add_argument("--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)")
-    parser.add_argument("--user-id", type=str, help="User ID to load specific API keys configuration")
     args = parser.parse_args()
 
-    # Setup OpenBB API keys based on user
-    try:
-        from setup_openbb_config import setup_api_keys
-        if args.user_id:
-            setup_api_keys(user_id=args.user_id)
-        else:
-            setup_api_keys()
-    except ImportError:
-        print("⚠️ OpenBB config setup not found, proceeding with default settings")
+    print(f"🚀 Running AlphaFlow with provider: {args.provider}")
+    print(f"📊 Symbols: {args.symbols}")
 
     # 1. 初始化上下文
     context = AnalysisContext(symbols=args.symbols)
@@ -38,7 +34,11 @@ async def main():
     # 2. 构建管道
     pipeline = ResearchPipeline(context)
     
-    (pipeline.add_step(OpenBBCollector("DataFetcher"))
+    # 设置提供商参数
+    collector = OpenBBCollector("DataFetcher")
+    collector.provider = args.provider  # 尝试设置提供商
+    
+    (pipeline.add_step(collector)
              .add_step(RSIProcessor("TechAnalysis"))
              .add_step(QuickChartVisualizer("ChartGen")))
 
@@ -51,8 +51,6 @@ async def main():
         if hasattr(pack, 'model_dump_json'):
             print("\n--- FINAL RESEARCH PACK ---")
             # 导出为 JSON，方便大模型解析
-            # 这里我们只展示概要，避免由于 DataFrame 太大导致输出溢出
-            # 但实际上 ResearchPack 已经包含了所有信息
             print(pack.model_dump_json(indent=2))
         else:
              print(json.dumps(results[-1].dict(), default=str, indent=2))

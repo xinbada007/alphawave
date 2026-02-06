@@ -4,28 +4,19 @@ import json
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
 from alphaflow.engine.pipeline import ResearchPipeline
-from alphaflow.components.collectors.basic import OpenBBCollector
+from alphaflow.components.collectors.openbb_collector_updated import OpenBBCollector
 from alphaflow.components.processors.technicals import RSIProcessor
 from alphaflow.components.visualizers.charting import QuickChartVisualizer
-from alphaflow.utils.user_config import config_manager
-
 
 async def main():
-    parser = argparse.ArgumentParser(description="AlphaFlow CLI")
+    parser = argparse.ArgumentParser(description="AlphaFlow CLI with Provider Selection")
     parser.add_argument("--symbols", nargs="+", default=["AAPL"], help="List of symbols")
+    parser.add_argument("--provider", type=str, default="yfinance", choices=["yfinance", "polygon", "fmp"], help="Data provider to use")
     parser.add_argument("--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)")
-    parser.add_argument("--user-id", type=str, help="User ID to load specific API keys configuration")
     args = parser.parse_args()
 
-    # Setup OpenBB API keys based on user
-    try:
-        from setup_openbb_config import setup_api_keys
-        if args.user_id:
-            setup_api_keys(user_id=args.user_id)
-        else:
-            setup_api_keys()
-    except ImportError:
-        print("⚠️ OpenBB config setup not found, proceeding with default settings")
+    print(f"🚀 Running AlphaFlow with provider: {args.provider}")
+    print(f"📊 Symbols: {args.symbols}")
 
     # 1. 初始化上下文
     context = AnalysisContext(symbols=args.symbols)
@@ -38,7 +29,10 @@ async def main():
     # 2. 构建管道
     pipeline = ResearchPipeline(context)
     
-    (pipeline.add_step(OpenBBCollector("DataFetcher"))
+    # 设置提供商参数
+    collector = OpenBBCollector("DataFetcher", config={"provider": args.provider})
+    
+    (pipeline.add_step(collector)
              .add_step(RSIProcessor("TechAnalysis"))
              .add_step(QuickChartVisualizer("ChartGen")))
 

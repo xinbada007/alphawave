@@ -11,8 +11,9 @@ from alphaflow.utils.user_config import config_manager
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="AlphaFlow CLI")
+    parser = argparse.ArgumentParser(description="AlphaFlow CLI with Provider Override")
     parser.add_argument("--symbols", nargs="+", default=["AAPL"], help="List of symbols")
+    parser.add_argument("--provider", type=str, default="polygon", help="Data provider (polygon, fmp, yfinance)")
     parser.add_argument("--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)")
     parser.add_argument("--user-id", type=str, help="User ID to load specific API keys configuration")
     args = parser.parse_args()
@@ -30,6 +31,9 @@ async def main():
     # 1. 初始化上下文
     context = AnalysisContext(symbols=args.symbols)
     global_ctx = GlobalContext()
+    
+    # Store provider in global context so collectors can access it
+    global_ctx.set('DATA_PROVIDER', args.provider)
     
     if args.proxy:
         global_ctx.set('PROXY', args.proxy)

@@ -1,0 +1,14 @@
+{
+  "api_keys": {
+    "polygon": "rF2RVdnvopgGKzH3IdETD7d0Tmpx1e+hS6mh0sP71JY=",
+    "fmp": "42PaD+y/xIQ8dQf4KJcSPK9JDDp6+J2pHoqiw4j+7L0=",
+    "tiingo": "",
+    "alpha_vantage": "l1OsD7+SsdddWX2bAa0aJg==",
+    "openbb": ""
+  },
+  "settings": {
+    "default_provider": "polygon",
+    "cache_enabled": true,
+    "request_delay": 0.1
+  }
+}
