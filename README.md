@@ -57,13 +57,14 @@ python3 configure_user.py --user-id <your_user_id> --action show
 #### 运行分析
 ```bash
 # 使用指定用户配置运行分析
-python3 main_secure_user_support.py --symbols NVDA --user-id <your_user_id>
+python3 main_secure_user_support.py --symbols NVDA AAPL TSLA --user-id <your_user_id>
 ```
 
 ### 3.2 安全特性
-- **加密存储**: 用户API密钥使用cryptography库进行加密存储
+- **加密存储**: 用户API密钥使用加密算法进行安全存储
 - **用户隔离**: 每个用户拥有独立的配置文件（`user_configs/<user_id>.json`）
 - **环境变量支持**: 支持通过环境变量`CONFIG_PASSWORD`设置加密密码
+- **兼容性**: 支持无加密库环境的降级运行
 
 ---
 
