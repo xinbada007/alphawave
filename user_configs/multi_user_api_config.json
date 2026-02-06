@@ -1,0 +1,31 @@
+{
+  "users": {
+    "test_user_1": {
+      "name": "Test User 1",
+      "email": "test1@example.com",
+      "added_at": "2026-02-06 15:52:34.810869",
+      "api_keys": {
+        "alpha_vantage": "test_av_key_1",
+        "polygon": "test_polygon_key_1"
+      }
+    },
+    "test_user_2": {
+      "name": "Test User 2",
+      "email": "test2@example.com",
+      "added_at": "2026-02-06 15:52:34.811244",
+      "api_keys": {
+        "alpha_vantage": "test_av_key_2",
+        "fmp": "test_fmp_key_2"
+      }
+    },
+    "yellow": {
+      "name": "Yellow",
+      "email": "yellow@example.com",
+      "added_at": "2026-02-06 15:40:58.847996",
+      "api_keys": {
+        "tiingo": "dec443b34083c7a97bd36916d09adf18260cf807"
+      }
+    }
+  },
+  "api_keys": {}
+}

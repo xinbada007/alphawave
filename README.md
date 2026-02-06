@@ -36,7 +36,7 @@ AlphaFlow 是一个专为 **Vibe Coding**（AI 辅助编程）设计的模块化
 
 ## 🔐 3. 安全与多用户管理 (Security & Multi-User)
 
-AlphaFlow 继承了强大的安全特性，支持多用户协同使用，并对敏感 API 密钥进行加密管理。
+AlphaFlow 继承了强大的安全特性，支持多用户协同使用，并对敏感 API 密钥进行加密管理和轮询使用。
 
 ### 3.1 用户配置管理
 ```bash
@@ -47,7 +47,18 @@ python3 scripts/configure_user.py --user-id <user_id>
 python3 scripts/configure_user.py --user-id <user_id> --action show
 ```
 
-### 3.2 运行分析
+### 3.2 API轮询系统
+AlphaFlow实现了智能API轮询机制，可自动在多个API密钥间轮询使用，有效避免频率限制：
+
+```bash
+# 添加用户API密钥到轮询系统
+python3 scripts/add_user_api_keys.py
+
+# 查看API使用统计
+python3 -c "from alphaflow.utils.api_rotator import api_rotator; print(api_rotator.get_stats())"
+```
+
+### 3.3 运行分析
 ```bash
 # 使用主程序运行
 python3 main.py --symbols NVDA --proxy socks5://...
