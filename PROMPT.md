@@ -12,6 +12,10 @@
     - `components/collectors/`: 数据抓取插件。
     - `components/processors/`: 因子分析、量化计算、模型训练。
     - `components/visualizers/`: 图表配置与 URL 生成。
+- **Scripts (辅助脚本)**: `scripts/` 包含用户配置、设置等脚本。
+- **Tests (测试代码)**: `tests/` 包含单元测试和集成测试。
+- **Docs (文档)**: `docs/` 包含项目文档和说明。
+- **UserConfigs (用户配置)**: `user_configs/` 包含加密的用户API密钥配置。
 
 ---
 

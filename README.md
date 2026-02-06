@@ -61,6 +61,9 @@ python3 main_secure_user_support.py --symbols NVDA AAPL TSLA --user-id <your_use
 
 # 使用AllTick API进行分析
 python3 run_alltick_analysis.py --symbols AAPL GOOGL MSFT --user-id <your_user_id>
+
+# 运行AllTick测试
+python3 tests/test_flexible_alltick.py
 ```
 
 ### 3.2 安全特性
@@ -98,10 +101,34 @@ pip3 install cryptography
 ### 首次运行设置
 ```bash
 # 为用户设置API密钥
-python3 configure_user.py --user-id my_user_id
+python3 scripts/configure_user.py --user-id my_user_id
 
 # 运行基准测试
 python3 main_secure_user_support.py --symbols NVDA --user-id my_user_id
+
+# 运行AllTick分析
+python3 run_alltick_analysis.py --symbols AAPL --user-id my_user_id
+```
+
+### 项目目录结构
+```
+alphawave/                 # AlphaFlow核心框架
+├── alphaflow/            # 核心组件
+│   ├── core/            # 核心基类和数据模型
+│   ├── components/      # 可插拔组件
+│   │   ├── collectors/  # 数据收集器
+│   │   ├── processors/  # 数据处理器  
+│   │   └── visualizers/ # 数据可视化器
+│   ├── engine/          # 管道引擎
+│   └── utils/           # 工具函数
+├── scripts/             # 脚本文件
+├── tests/               # 测试文件
+├── docs/                # 文档
+├── user_configs/        # 用户配置
+├── main.py              # 主程序入口
+├── main_secure_user_support.py # 支持多用户的主程序
+├── run_alltick_analysis.py   # AllTick分析脚本
+└── setup_new_user.sh         # 新用户设置脚本
 ```
 
 ### 预期输出
