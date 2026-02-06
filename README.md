@@ -58,6 +58,9 @@ python3 configure_user.py --user-id <your_user_id> --action show
 ```bash
 # 使用指定用户配置运行分析
 python3 main_secure_user_support.py --symbols NVDA AAPL TSLA --user-id <your_user_id>
+
+# 使用AllTick API进行分析
+python3 run_alltick_analysis.py --symbols AAPL GOOGL MSFT --user-id <your_user_id>
 ```
 
 ### 3.2 安全特性

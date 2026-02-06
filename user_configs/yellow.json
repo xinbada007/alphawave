@@ -1,10 +1,11 @@
 {
   "api_keys": {
-    "polygon": "rF2RVdnvopgGKzH3IdETD7d0Tmpx1e+hS6mh0sP71JY=",
-    "fmp": "42PaD+y/xIQ8dQf4KJcSPK9JDDp6+J2pHoqiw4j+7L0=",
+    "polygon": "0RtJEnyRrfcNZmDd12pS3TRDJFW4wsxj6UwnClqxlWfwaxYoGoaTtlNcXqc=",
+    "fmp": "l28rIW7euq4aX1ai+EF82jZtAlKsvpEZ+WUnRECejH/rMgopXcGpqlVaN6c=",
     "tiingo": "",
-    "alpha_vantage": "l1OsD7+SsdddWX2bAa0aJg==",
-    "openbb": ""
+    "alpha_vantage": "z2w0M27C6NIRcmP+y0gojDxGUWC2kpVu",
+    "openbb": "",
+    "alltick": "x2hKckvHoONRIzX++nIpjEpDUDGfwMk2jUcyQlK2hzaOPlYhWoU="
   },
   "settings": {
     "default_provider": "polygon",

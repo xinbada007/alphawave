@@ -67,17 +67,18 @@ class SecureConfigManager:
             print(f"解密失败: {e}")
             return encrypted_data  # 返回原始数据作为fallback
             
-    def save_user_config(self, user_id: str, api_keys: Dict[str, str], settings: Dict = None):
+    def save_user_config(self, user_id: str, config_data: Dict):
         """保存加密的用户配置"""
         config = {
             "api_keys": {},
-            "settings": settings or {}
+            "settings": config_data.get("settings", {})
         }
         
         # 加密API密钥
+        api_keys = config_data.get("api_keys", {})
         for key, value in api_keys.items():
             if value:  # 如果值不为空，则加密存储
-                config["api_keys"][key] = self._simple_encrypt(value)
+                config["api_keys"][key] = self._simple_encrypt(str(value))
             else:
                 config["api_keys"][key] = value  # 空值不需要加密
                 
