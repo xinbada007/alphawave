@@ -4,63 +4,51 @@ import json
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
 from alphaflow.engine.pipeline import ResearchPipeline
-from alphaflow.components.collectors.basic import OpenBBCollector
-from alphaflow.components.processors.technicals import RSIProcessor
-from alphaflow.components.visualizers.charting import QuickChartVisualizer
-from alphaflow.utils.user_config import config_manager
 
+# 导入拆分后的 Collector
+from alphaflow.components.collectors.market_data import EquityPriceCollector
+from alphaflow.components.collectors.fundamental import FundamentalCollector
+from alphaflow.components.collectors.news import NewsCollector
+
+# 导入加工与展示组件
+from alphaflow.components.processors.technicals import TechnicalProcessor
+from alphaflow.components.visualizers.charting import QuickChartVisualizer
 
 async def main():
-    parser = argparse.ArgumentParser(description="AlphaFlow CLI")
+    parser = argparse.ArgumentParser(description="AlphaFlow Production Pipeline")
     parser.add_argument("--symbols", nargs="+", default=["AAPL"], help="List of symbols")
     parser.add_argument("--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)")
-    parser.add_argument("--user-id", type=str, help="User ID to load specific API keys configuration")
     args = parser.parse_args()
 
-    # Setup OpenBB API keys based on user
-    try:
-        from setup_openbb_config import setup_api_keys
-        if args.user_id:
-            setup_api_keys(user_id=args.user_id)
-        else:
-            setup_api_keys()
-    except ImportError:
-        print("⚠️ OpenBB config setup not found, proceeding with default settings")
-
-    # 1. 初始化上下文
+    # 1. 配置全局环境
     context = AnalysisContext(symbols=args.symbols)
     global_ctx = GlobalContext()
-    
     if args.proxy:
         global_ctx.set('PROXY', args.proxy)
         global_ctx.apply_proxy()
     
-    # 2. 构建管道
+    # 2. 构建多维度投研管道
+    # 架构理念：Collector 链式调用，不断丰富 ResearchPack 的维度
     pipeline = ResearchPipeline(context)
     
-    (pipeline.add_step(OpenBBCollector("DataFetcher"))
-             .add_step(RSIProcessor("TechAnalysis"))
-             .add_step(QuickChartVisualizer("ChartGen")))
+    (pipeline.add_step(EquityPriceCollector("MarketFetcher"))      # 维度 1: 股价 (必备)
+             .add_step(FundamentalCollector("BizFetcher"))         # 维度 2: 经营面
+             .add_step(NewsCollector("NewsFetcher"))               # 维度 3: 消息面
+             .add_step(TechnicalProcessor("IndicatorProcessor"))   # 维度 4: 技术面加工
+             .add_step(QuickChartVisualizer("ChartGen")))          # 维度 5: 可视化渲染
 
-    # 3. 运行
+    # 3. 执行
     results = await pipeline.run()
 
-    # 4. 输出结果 (给 LLM 看的)
+    # 4. 结构化输出
     if results and results[-1].success:
         pack = results[-1].payload
-        if hasattr(pack, 'model_dump_json'):
-            print("\n--- FINAL RESEARCH PACK ---")
-            # 导出为 JSON，方便大模型解析
-            # 这里我们只展示概要，避免由于 DataFrame 太大导致输出溢出
-            # 但实际上 ResearchPack 已经包含了所有信息
-            print(pack.model_dump_json(indent=2))
-        else:
-             print(json.dumps(results[-1].dict(), default=str, indent=2))
+        print("\n" + "="*50)
+        print(f"🚀 RESEARCH REPORT: {pack.symbol}")
+        print("="*50)
+        print(pack.model_dump_json(indent=2))
     else:
-        print("\n--- PIPELINE FAILED ---")
-        for res in results:
-            if not res.success:
-                print(f"Error: {res.error}")
+        print("\n❌ Pipeline Failed at some stage.")
 
 if __name__ == "__main__":
     asyncio.run(main())

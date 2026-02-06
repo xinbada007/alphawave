@@ -1,42 +1,36 @@
 # 🌊 AlphaFlow Framework (v1.1)
 **工业级金融投研异步协作框架**
 
-AlphaFlow 是一个专为 **Vibe Coding**（AI 辅助编程）设计的模块化投研框架。它在 E2B 沙箱中运行，深度集成 OpenBB Platform v4 数据，并通过 QuickChart 生成极简的投研图表短链接。
+AlphaFlow 是一个专为 **Vibe Coding** 设计的插件化投研框架，旨在实现多人并行开发、数据深度解耦。
 
 ---
 
-## 🏗️ 1. 架构核心 (Core Philosophy)
+## 🏗️ 1. 协作架构 (Collaborative Architecture)
 
-### 1.1 核心组件
-- **Core (内核)**: 定义了数据法典 (`schema.py`) 和组件契约 (`base.py`)。**禁止修改**。
-- **ResearchPack (万能容器)**: 跨组件流转的唯一数据对象。包含行情、技术面、新闻、基本面以及图表 URL。
-- **Engine (引擎)**: 异步并行调度器，负责管理 Pipeline 生命周期和容错。
+为了支持 5-7 人团队，AlphaFlow v1.2 将采集器进行了**水平切分**：
 
-### 1.2 数据流转标准
-```text
-Collector -> [ResearchPack] -> Processor -> [ResearchPack] -> Visualizer -> [Final JSON]
-```
-所有组件必须将 `DataFrame` 封装进 `DataFrameModel` 才能在 `ResearchPack` 中传递。
+### 1.1 数据采集端 (Collectors)
+- **股价采集 (Fixed)**: 基于 OpenBB/yfinance 的标准化获取。维护者需确保 OHLCV 的绝对准确。
+- **经营分析 (Semi-Fixed)**: 抓取财报指标、经营数据。维护者需关注字段映射的完整性。
+- **消息聚合 (Flexible)**: 依赖爬虫、搜索或社交媒体。允许高度灵活性和局部失效。
+
+### 1.2 逻辑处理端 (Processors)
+- **技术面分析**: 计算 RSI, MA 等标准因子。
+- **量化策略/模型**: 基于 `ResearchPack` 进行深度特征工程。
 
 ---
 
-## 🛠️ 2. 开发者指南 (Vibe Coding 流程)
+## 🛠️ 2. 多人协作开发流程
 
-团队成员应遵循以下步骤利用 LLM 进行开发：
+### 角色分配示例：
+- **开发者 A**: 编写 `market_data.py` (保证生肉供应)。
+- **开发者 B**: 编写 `fundamental.py` (增加财报维度)。
+- **开发者 C**: 编写 `rsi_processor.py` (增加动量因子)。
 
-### 第一步：同步"宪法" (Handshake)
-将项目根目录下的 `PROMPT.md` 内容复制并发送给你的 LLM（如 Claude 3.5 或 GPT-4o）。
-> **LLM 应回复**: "AlphaFlow v1.1 协议已就绪..."
-
-### 第二步：指令描述 (Tasking)
-向 LLM 描述你的业务需求。
-> **示例指令**: "帮我写一个 AlphaFlow Processor。利用 OpenBB 计算 20 日布林带 (Bollinger Bands)，并将结果存入 ResearchPack 的 extra 槽位。"
-
-### 第三步：代码部署
-将生成的代码保存到对应的插件目录：
-- 数据源 -> `alphaflow/components/collectors/`
-- 计算逻辑 -> `alphaflow/components/processors/`
-- 可视化 -> `alphaflow/components/visualizers/`
+### Vibe Coding 操作指南：
+1. **喂入协议**: 给 LLM 发送 `alphaflow/PROMPT.md`。
+2. **定义任务**: "为 AlphaFlow 写一个 [Collector/Processor]。只负责处理 ResearchPack 中的 [某个字段]。"
+3. **独立测试**: 运行 `main.py` 验证你的字段是否出现在最终的 JSON 报告中。
 
 ---
 
@@ -145,39 +139,15 @@ alphawave/                 # AlphaFlow核心框架
 
 ---
 
-## ⚠️ 6. 开发注意事项 (Constraints)
-1. **禁止绘图**: 严禁在代码中引入 `matplotlib` 或 `plotly`。
-2. **强制 Pydantic**: 必须返回 `ComponentOutput` 对象。
-3. **最新数据**: 框架已优化降采样算法，确保无论如何压缩，**最新的价格点**永远会被保留在图表末尾。
-4. **扩展性**: 团队成员若要增加自定义数据，请统一放入 `ResearchPack.extra` 字典中。
-5. **安全性**: 所有用户敏感信息必须加密存储，不得在代码或日志中明文显示。
+## 🔌 4. 核心特性
+- **🛡️ 强鲁棒性**: 经营面和消息面组件采用“静默失败”策略，确保核心股价分析不中断。
+- **💾 共享缓存**: 所有 Collector 共享 `.cache` 目录，避免团队重复请求触发 API 限制。
+- **🌐 统一代理**: 通过 `--proxy` 参数一键注入全局 SOCKS5 代理。
+- **📊 智能压缩**: 自动将金融序列降采样至 250 点，保留最新价格，确保 QuickChart 短链接生成成功。
 
 ---
 
-## 📚 7. 项目文档
-
-- `AGENT.md`: 协同开发文档和最佳实践
-- `DEPENDENCIES.md`: 详细的依赖库说明
-- `user_setup_guide.md`: 用户配置指南
-- `TEAM_STRUCTURE.md`: 团队分工方案
-
----
-
-## 👥 8. 团队分工 (Team Structure)
-
-### 核心角色分配
-- **核心负责人** (1人): 项目整体规划、架构设计、代码审查
-- **数据获取组** (2人): 负责股票数据获取（项目重点）
-  - 数据源工程师: 集成和维护数据提供商接口
-  - 数据质量工程师: 确保数据准确性和一致性
-- **功能开发组** (1人): 技术指标计算和可视化
-- **安全运维组** (1人): 系统安全和运维保障
-
-### 关键绩效指标
-- 数据获取成功率 > 99%
-- API响应时间 < 2秒
-- 数据准确性 > 99.5%
-- 系统可用性 > 99.5%
-- API密钥零泄露事件
-
-详情请参阅 `TEAM_STRUCTURE.md` 文件。
+## ⚠️ 5. 开发者契约
+1. **不破环数据总线**: 严禁在组件间传递非 `ResearchPack` 对象。
+2. **防御性初始化**: 始终使用标准的解包逻辑处理 `input_data`。
+3. **保持原子性**: 一个文件只解决一个问题，方便 AI 理解与维护。

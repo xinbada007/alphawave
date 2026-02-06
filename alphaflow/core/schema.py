@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 import json
 import time
+import io
 
 # --- 基础数据契约 ---
 
@@ -29,7 +30,7 @@ class DataFrameModel(BaseModel):
         """还原为 Pandas DataFrame"""
         if not self.data_json:
             return pd.DataFrame()
-        df = pd.read_json(self.data_json, orient='records')
+        df = pd.read_json(io.StringIO(self.data_json), orient='records')
         # 尝试自动修复日期格式，因为 JSON 会把日期变成字符串
         for col in df.columns:
             if 'date' in col.lower() or 'time' in col.lower():
