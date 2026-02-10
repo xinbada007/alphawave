@@ -41,14 +41,25 @@ async def main():
     results = await pipeline.run()
 
     # 4. 结构化输出
-    if results and results[-1].success:
-        pack = results[-1].payload
-        print("\n" + "="*50)
-        print(f"🚀 RESEARCH REPORT: {pack.symbol}")
-        print("="*50)
+    print("\n" + "=" * 50)
+    print(f"📊 PIPELINE SUMMARY")
+    print("=" * 50)
+
+    for i, result in enumerate(results):
+        step_name = pipeline.steps[i].name if i < len(pipeline.steps) else "Unknown"
+        status = "✅" if result.success else "❌"
+        err = f" ({result.error})" if result.error else ""
+        print(f"  {status} Step {i+1}: {step_name}{err}")
+
+    # 取最后一个成功的结果
+    success_results = [r for r in results if r.success]
+    if success_results:
+        pack = success_results[-1].payload
+        print(f"\n🚀 RESEARCH REPORT: {pack.symbol}")
+        print("=" * 50)
         print(pack.model_dump_json(indent=2))
     else:
-        print("\n❌ Pipeline Failed at some stage.")
+        print("\n❌ All steps failed. No report generated.")
 
 if __name__ == "__main__":
     asyncio.run(main())

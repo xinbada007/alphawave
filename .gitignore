@@ -142,3 +142,5 @@ cython_debug/
 
 # AlphaFlow specific
 .cache/
+
+*.txt

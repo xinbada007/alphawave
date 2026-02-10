@@ -1,40 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-news.py — 消息面采集器（框架集成版）
-
-职责：聚合新闻、公告、市场资讯、机构评级、舆情情绪等非结构化数据，
-     进行关键词情感分析，生成消息概述与综合分析报告并输出到文件。
-
-架构定位：alphaflow pipeline 中的 NewsCollector 组件
-数据源　：AkShare API（8 个独立模块，局部失效静默跳过）
-输出　　：
-  - ResearchPack.news            → 个股新闻列表 (List[Dict])
-  - ResearchPack.extra["news_*"] → 情感分析、概述、报告路径等
-  - 本地文件 reports/news_<symbol>_<ts>.txt
+news.py — 股票消息聚合与量化分析模块
+功能：
+  1. 从多个数据源（AkShare API）采集个股新闻、公告、市场资讯、股吧舆情等
+  2. 对非结构化文本做关键词情感分析
+  3. 生成消息概述 + 综合分析报告
+  4. 全部内容输出到文件
+策略：局部失效时静默跳过，不影响其他模块运行
 """
 
 import os
 import sys
-import asyncio
+import json
 import hashlib
 from datetime import datetime, timedelta
 from collections import Counter
-from typing import Any, Dict, List, Optional, Tuple
-from openbb import obb
+from typing import Dict, List, Optional, Tuple
 
+import akshare as ak
 import pandas as pd
 
-from alphaflow.core.base import BaseCollector
-from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack
-
-# AkShare 延迟导入（允许环境中缺失时静默降级）
-try:
-    import akshare as ak
-    _HAS_AKSHARE = True
-except ImportError:
-    ak = None  # type: ignore
-    _HAS_AKSHARE = False
 
 # ============================================================
 #  情感词典（A 股语境）
@@ -109,7 +95,7 @@ def _sentiment_score(text: str) -> Tuple[float, str]:
 def _extract_keywords(texts: List[str], top_n: int = 15) -> List[Tuple[str, int]]:
     """从文本列表中提取高频关键词"""
     all_words = POSITIVE_WORDS + NEGATIVE_WORDS + NEUTRAL_WORDS
-    counter: Counter = Counter()
+    counter = Counter()
     for text in texts:
         for w in all_words:
             if w in text:
@@ -118,19 +104,26 @@ def _extract_keywords(texts: List[str], top_n: int = 15) -> List[Tuple[str, int]
 
 
 # ============================================================
-#  内部引擎：StockNewsAggregator
-#  负责全部 AkShare 数据采集、情感分析、报告生成
+#  数据采集层（每个函数独立、可局部失效）
 # ============================================================
 class StockNewsAggregator:
     """
-    股票消息聚合引擎（内部使用，由 NewsCollector 调用）
+    股票消息聚合器
 
-    独立运行:
+    用法:
         agg = StockNewsAggregator(symbol="300059", name="东方财富")
-        report = agg.run()
+        report = agg.run()          # 采集 + 分析 + 生成报告
+        agg.save(report, "report.txt")
     """
 
     def __init__(self, symbol: str, name: str = "", days: int = 30):
+        """
+        Parameters
+        ----------
+        symbol : str   股票代码，如 "300059" / "600519"
+        name   : str   股票名称（可选，留空会自动获取）
+        days   : int   回溯天数，默认 30
+        """
         self.symbol = symbol.strip()
         self.name = name.strip()
         self.days = days
@@ -157,11 +150,16 @@ class StockNewsAggregator:
     #  模块 1：个股基本信息
     # -------------------------------------------------------
     def fetch_stock_info(self):
+        """获取个股基本信息"""
         def _fetch():
-            return ak.stock_individual_info_em(symbol=self.symbol)
-        self.stock_info = _safe_call(_fetch, default=None, module_name="个股基本信息")
+            df = ak.stock_individual_info_em(symbol=self.symbol)
+            return df
+        self.stock_info = _safe_call(
+            _fetch, default=None, module_name="个股基本信息"
+        )
         if self.stock_info is not None:
             self.success_modules.append("个股基本信息")
+            # 尝试从基本信息里取名称
             if not self.name:
                 try:
                     row = self.stock_info[self.stock_info["item"] == "股票简称"]
@@ -176,9 +174,13 @@ class StockNewsAggregator:
     #  模块 2：个股新闻
     # -------------------------------------------------------
     def fetch_news(self):
+        """获取个股新闻（东方财富）"""
         def _fetch():
-            return ak.stock_news_em(symbol=self.symbol)
-        self.news_data = _safe_call(_fetch, default=None, module_name="个股新闻")
+            df = ak.stock_news_em(symbol=self.symbol)
+            return df
+        self.news_data = _safe_call(
+            _fetch, default=None, module_name="个股新闻"
+        )
         if self.news_data is not None and not self.news_data.empty:
             self.success_modules.append("个股新闻")
         else:
@@ -188,9 +190,13 @@ class StockNewsAggregator:
     #  模块 3：公司公告
     # -------------------------------------------------------
     def fetch_notices(self):
+        """获取公司公告"""
         def _fetch():
-            return ak.stock_notice_report(symbol=self.symbol)
-        self.notices_data = _safe_call(_fetch, default=None, module_name="公司公告")
+            df = ak.stock_notice_report(symbol=self.symbol)
+            return df
+        self.notices_data = _safe_call(
+            _fetch, default=None, module_name="公司公告"
+        )
         if self.notices_data is not None and not self.notices_data.empty:
             self.success_modules.append("公司公告")
         else:
@@ -200,33 +206,45 @@ class StockNewsAggregator:
     #  模块 4：财经要闻（全局）
     # -------------------------------------------------------
     def fetch_market_news(self):
+        """获取全球财经要闻"""
         def _fetch():
-            return ak.stock_info_global_em()
-        self.market_news = _safe_call(_fetch, default=None, module_name="财经要闻")
+            df = ak.stock_info_global_em()
+            return df
+        self.market_news = _safe_call(
+            _fetch, default=None, module_name="财经要闻"
+        )
         if self.market_news is not None and not self.market_news.empty:
             self.success_modules.append("财经要闻")
         else:
             self.failed_modules.append("财经要闻")
 
     # -------------------------------------------------------
-    #  模块 5：千股千评
+    #  模块 5：千股千评（市场评论/情绪）
     # -------------------------------------------------------
     def fetch_comments(self):
+        """获取千股千评数据"""
         def _fetch():
-            return ak.stock_comment_detail_zlkp_jgcyd_em(symbol=self.symbol)
-        self.comment_data = _safe_call(_fetch, default=None, module_name="千股千评")
+            df = ak.stock_comment_detail_zlkp_jgcyd_em(symbol=self.symbol)
+            return df
+        self.comment_data = _safe_call(
+            _fetch, default=None, module_name="千股千评"
+        )
         if self.comment_data is not None and not self.comment_data.empty:
             self.success_modules.append("千股千评")
         else:
             self.failed_modules.append("千股千评")
 
     # -------------------------------------------------------
-    #  模块 6：机构评级情绪
+    #  模块 6：机构持仓/评级情绪
     # -------------------------------------------------------
     def fetch_institutional_sentiment(self):
+        """获取机构评级/参与度"""
         def _fetch():
-            return ak.stock_comment_detail_zhpj_lspf_em(symbol=self.symbol)
-        self.inst_sentiment = _safe_call(_fetch, default=None, module_name="机构评级情绪")
+            df = ak.stock_comment_detail_zhpj_lspf_em(symbol=self.symbol)
+            return df
+        self.inst_sentiment = _safe_call(
+            _fetch, default=None, module_name="机构评级情绪"
+        )
         if self.inst_sentiment is not None and not self.inst_sentiment.empty:
             self.success_modules.append("机构评级情绪")
         else:
@@ -236,10 +254,15 @@ class StockNewsAggregator:
     #  模块 7：个股人气排名
     # -------------------------------------------------------
     def fetch_hot_rank(self):
+        """获取个股人气排名"""
         def _fetch():
-            return ak.stock_hot_rank_em()
-        raw = _safe_call(_fetch, default=None, module_name="人气排名")
+            df = ak.stock_hot_rank_em()
+            return df
+        raw = _safe_call(
+            _fetch, default=None, module_name="人气排名"
+        )
         if raw is not None and not raw.empty:
+            # 过滤出目标股票
             mask = raw["代码"].astype(str).str.contains(self.symbol)
             self.hot_rank = raw[mask] if mask.any() else raw.head(20)
             self.success_modules.append("人气排名")
@@ -247,14 +270,16 @@ class StockNewsAggregator:
             self.failed_modules.append("人气排名")
 
     # -------------------------------------------------------
-    #  模块 8：板块资金流
+    #  模块 8：行业/板块资讯
     # -------------------------------------------------------
     def fetch_sector_news(self):
+        """获取板块资金流（间接反映板块情绪）"""
         def _fetch():
-            return ak.stock_sector_fund_flow_rank(
-                indicator="今日", sector_type="行业资金流"
-            )
-        self.sector_news = _safe_call(_fetch, default=None, module_name="板块资金流")
+            df = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")
+            return df
+        self.sector_news = _safe_call(
+            _fetch, default=None, module_name="板块资金流"
+        )
         if self.sector_news is not None and not self.sector_news.empty:
             self.success_modules.append("板块资金流")
         else:
@@ -264,18 +289,22 @@ class StockNewsAggregator:
     #  情感分析
     # -------------------------------------------------------
     def analyze_sentiment(self):
-        texts: List[str] = []
+        """对采集到的新闻/公告做情感分析"""
+        texts = []
 
+        # 新闻标题 + 内容
         if self.news_data is not None and not self.news_data.empty:
             for col in ["新闻标题", "新闻内容", "标题", "内容"]:
                 if col in self.news_data.columns:
                     texts.extend(self.news_data[col].dropna().astype(str).tolist())
 
+        # 公告标题
         if self.notices_data is not None and not self.notices_data.empty:
             for col in ["公告标题", "标题", "公告名称"]:
                 if col in self.notices_data.columns:
                     texts.extend(self.notices_data[col].dropna().astype(str).tolist())
 
+        # 全局财经标题
         if self.market_news is not None and not self.market_news.empty:
             for col in ["标题", "title", "摘要"]:
                 if col in self.market_news.columns:
@@ -283,7 +312,8 @@ class StockNewsAggregator:
                         self.market_news[col].dropna().astype(str).tolist()[:30]
                     )
 
-        seen: set = set()
+        # 逐条情感打分
+        seen = set()
         for text in texts:
             h = _text_hash(text)
             if h in seen or len(text.strip()) < 4:
@@ -297,19 +327,23 @@ class StockNewsAggregator:
             })
 
     # -------------------------------------------------------
-    #  消息概述
+    #  生成消息概述
     # -------------------------------------------------------
     def build_overview(self):
+        """构建消息概述/概况"""
         total = len(self.sentiment_results)
         pos_count = sum(1 for r in self.sentiment_results if r["label"] == "积极")
         neg_count = sum(1 for r in self.sentiment_results if r["label"] == "消极")
         neu_count = sum(1 for r in self.sentiment_results if r["label"] == "中性")
 
-        avg_score = (
-            round(sum(r["score"] for r in self.sentiment_results) / total, 4)
-            if total > 0 else 0.0
-        )
+        if total > 0:
+            avg_score = round(
+                sum(r["score"] for r in self.sentiment_results) / total, 4
+            )
+        else:
+            avg_score = 0.0
 
+        # 综合情绪判定
         if avg_score > 0.15:
             overall = "偏积极 📈"
         elif avg_score < -0.15:
@@ -317,9 +351,11 @@ class StockNewsAggregator:
         else:
             overall = "中性 ➡️"
 
+        # 关键词提取
         all_texts = [r["text"] for r in self.sentiment_results]
         keywords = _extract_keywords(all_texts, top_n=15)
 
+        # 新闻数量统计
         news_count = len(self.news_data) if self.news_data is not None else 0
         notice_count = len(self.notices_data) if self.notices_data is not None else 0
         market_count = len(self.market_news) if self.market_news is not None else 0
@@ -346,10 +382,11 @@ class StockNewsAggregator:
         }
 
     # -------------------------------------------------------
-    #  生成完整报告
+    #  生成完整报告（字符串）
     # -------------------------------------------------------
     def generate_report(self) -> str:
-        lines: List[str] = []
+        """生成完整的文字报告"""
+        lines = []
         sep = "=" * 72
 
         # ---------- 封面 ----------
@@ -397,6 +434,8 @@ class StockNewsAggregator:
         lines.append("三、个股新闻（最近）")
         lines.append("-" * 40)
         if self.news_data is not None and not self.news_data.empty:
+            display_cols = [c for c in ["新闻标题", "发布时间", "新闻来源", "新闻内容"]
+                           if c in self.news_data.columns]
             for idx, row in self.news_data.head(20).iterrows():
                 title = ""
                 for col in ["新闻标题", "标题"]:
@@ -410,6 +449,8 @@ class StockNewsAggregator:
                         break
                 score, label = _sentiment_score(title)
                 lines.append(f"  [{label}] {time_str}  {title}")
+
+                # 摘要
                 for col in ["新闻内容", "内容"]:
                     if col in row.index and pd.notna(row[col]):
                         content = str(row[col]).strip()[:200]
@@ -516,11 +557,12 @@ class StockNewsAggregator:
         return "\n".join(lines)
 
     # -------------------------------------------------------
-    #  综合结论
+    #  综合结论（自动生成）
     # -------------------------------------------------------
     def _generate_conclusion(self) -> str:
+        """基于采集数据自动生成一段分析结论"""
         ov = self.overview
-        parts: List[str] = []
+        parts = []
         parts.append(
             f"  本次对 {ov['股票名称']}（{ov['股票代码']}）的消息聚合分析，"
             f"共成功接入 {ov['数据源成功']} 个数据源，"
@@ -535,10 +577,12 @@ class StockNewsAggregator:
         parts.append(
             f"  平均情感得分为 {ov['平均情感得分']:+.4f}，综合情绪判定为【{ov['综合情绪判定']}】。"
         )
-        if ov["高频关键词"]:
-            top5 = "、".join([w for w, _ in ov["高频关键词"][:5]])
-            parts.append(f"  近期高频关键词：{top5}。")
 
+        if ov["高频关键词"]:
+            top3 = "、".join([f"{w}" for w, _ in ov["高频关键词"][:5]])
+            parts.append(f"  近期高频关键词：{top3}。")
+
+        # 基于情绪给出建议性判断
         score = ov["平均情感得分"]
         if score > 0.3:
             parts.append("  当前舆情整体偏正面，市场关注度较高，建议关注后续业绩兑现情况。")
@@ -561,62 +605,87 @@ class StockNewsAggregator:
         return f"{part / total * 100:.1f}%"
 
     # -------------------------------------------------------
-    #  保存报告
+    #  保存报告到文件
     # -------------------------------------------------------
-    def save(self, report: str, filepath: str = "") -> str:
-        """保存报告到文件，返回实际文件路径"""
+    def save(self, report: str, filepath: str = ""):
+        """将报告保存到文件"""
         if not filepath:
-            report_dir = os.path.join(os.path.dirname(__file__), "reports")
-            os.makedirs(report_dir, exist_ok=True)
             safe_name = self.name if self.name else self.symbol
-            filename = f"news_{safe_name}_{self.symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            filepath = os.path.join(report_dir, filename)
+            filepath = f"report_{safe_name}_{self.symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
-        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(report)
-        print(f"  ✅ 报告已保存到：{os.path.abspath(filepath)}")
-        return os.path.abspath(filepath)
+        print(f"\n✅ 报告已保存到：{os.path.abspath(filepath)}")
 
     # -------------------------------------------------------
-    #  一键运行（同步）
+    #  主入口：一键运行
     # -------------------------------------------------------
     def run(self, save_to_file: bool = True, filepath: str = "") -> str:
+        """
+        一键运行全部流程：采集 → 分析 → 生成报告 → 保存
+
+        Parameters
+        ----------
+        save_to_file : bool  是否自动保存文件
+        filepath     : str   保存路径（为空则自动生成）
+
+        Returns
+        -------
+        report : str  完整的文字报告
+        """
         print(f"{'=' * 50}")
         print(f"  开始消息聚合分析：{self.symbol}  {self.name}")
         print(f"  回溯 {self.days} 天 | {_now_str()}")
         print(f"{'=' * 50}")
 
-        steps = [
-            ("1/8", "采集个股基本信息",   self.fetch_stock_info),
-            ("2/8", "采集个股新闻",       self.fetch_news),
-            ("3/8", "采集公司公告",       self.fetch_notices),
-            ("4/8", "采集财经要闻",       self.fetch_market_news),
-            ("5/8", "采集千股千评",       self.fetch_comments),
-            ("6/8", "采集机构评级情绪",   self.fetch_institutional_sentiment),
-            ("7/8", "采集人气排名",       self.fetch_hot_rank),
-            ("8/8", "采集板块资金流",     self.fetch_sector_news),
-        ]
-        for tag, desc, fn in steps:
-            print(f"  📡 [{tag}] {desc}...")
-            fn()
+        # 1. 数据采集
+        print("\n📡 [1/8] 采集个股基本信息...")
+        self.fetch_stock_info()
 
-        print("  🔍 正在进行情感分析...")
+        print("📡 [2/8] 采集个股新闻...")
+        self.fetch_news()
+
+        print("📡 [3/8] 采集公司公告...")
+        self.fetch_notices()
+
+        print("📡 [4/8] 采集财经要闻...")
+        self.fetch_market_news()
+
+        print("📡 [5/8] 采集千股千评...")
+        self.fetch_comments()
+
+        print("📡 [6/8] 采集机构评级情绪...")
+        self.fetch_institutional_sentiment()
+
+        print("📡 [7/8] 采集人气排名...")
+        self.fetch_hot_rank()
+
+        print("📡 [8/8] 采集板块资金流...")
+        self.fetch_sector_news()
+
+        # 2. 情感分析
+        print("\n🔍 正在进行情感分析...")
         self.analyze_sentiment()
 
-        print("  📊 正在构建消息概述...")
+        # 3. 构建概述
+        print("📊 正在构建消息概述...")
         self.build_overview()
 
-        print("  📝 正在生成综合报告...")
+        # 4. 生成报告
+        print("📝 正在生成综合报告...")
         report = self.generate_report()
 
+        # 5. 保存
         if save_to_file:
             self.save(report, filepath)
 
+        # 6. 在终端打印概述
         self._print_overview_to_console()
+
         return report
 
     def _print_overview_to_console(self):
+        """在终端简要打印概述"""
         ov = self.overview
         print(f"\n{'─' * 50}")
         print(f"  📋 消息概述 — {ov['股票名称']}（{ov['股票代码']}）")
@@ -633,122 +702,7 @@ class StockNewsAggregator:
 
 
 # ============================================================
-#  框架对外接口：NewsCollector
-# ============================================================
-class NewsCollector(BaseCollector):
-    """
-    【消息面采集器】— alphaflow pipeline 组件
-
-    职责：
-      1. 通过 AkShare API 聚合新闻、公告、市场资讯、机构评级、舆情情绪
-      2. 关键词情感分析
-      3. 生成消息概述 + 综合分析报告，输出到文件
-      4. 将结构化结果写入 ResearchPack，传递给下游组件
-
-    Vibe Coding 特性：
-      - 8 个数据源独立采集，局部失效静默跳过
-      - 高扩展性，新增数据源只需在 StockNewsAggregator 中增加 fetch_xxx 方法
-      - 支持 AkShare 缺失时优雅降级
-
-    数据流入：ResearchPack（从上游组件获取 symbol）
-    数据流出：
-      - pack.news                       → 个股新闻列表 List[Dict]
-      - pack.extra["news_overview"]     → 消息概述字典
-      - pack.extra["news_sentiment"]    → 情感分析结果列表
-      - pack.extra["news_report_path"]  → 报告文件绝对路径
-      - pack.extra["news_conclusion"]   → 综合结论文本
-      - pack.extra["news_report"]       → 完整报告文本（截断，防止内存膨胀）
-    """
-
-    async def fetch_data(
-        self, context: AnalysisContext, **kwargs
-    ) -> ComponentOutput:
-        # ------ 解包上游数据 ------
-        input_data = kwargs.get("input_data")
-        pack = (
-            input_data.payload
-            if isinstance(input_data, ComponentOutput)
-            else input_data
-        )
-        if pack is None:
-            pack = ResearchPack(symbol=context.symbols[0])
-
-        symbol = pack.symbol
-        # 尝试从 context 获取名称（如果上游已经填充了）
-        name = getattr(pack, "name", "") or ""
-        days = context.config.get("news_days", 30) if hasattr(context, "config") and context.config else 30
-
-        print(f"\n  [NewsCollector] 启动消息面采集 → {symbol} {name}")
-
-        # ------ 检查 AkShare 可用性 ------
-        if not _HAS_AKSHARE:
-            print("  [!] AkShare 未安装，消息面采集跳过")
-            pack.extra["news_status"] = "akshare not installed"
-            return ComponentOutput(success=True, payload=pack)
-
-        # ------ 在线程池中运行同步的 AkShare 采集（避免阻塞事件循环）------
-        try:
-            agg = StockNewsAggregator(symbol=symbol, name=name, days=days)
-            # AkShare 全部是同步 HTTP 调用，放到线程池中执行
-            report = await asyncio.to_thread(
-                agg.run, save_to_file=True, filepath=""
-            )
-        except Exception as e:
-            print(f"  [!] NewsCollector 整体异常（已静默跳过）: {e}")
-            pack.extra["news_status"] = f"aggregator error: {e}"
-            return ComponentOutput(success=True, payload=pack)
-
-        # ------ 将结果写入 ResearchPack ------
-
-        # 1) pack.news ← 个股新闻列表（与框架原有字段兼容）
-        if agg.news_data is not None and not agg.news_data.empty:
-            pack.news = agg.news_data.head(20).to_dict(orient="records")
-        else:
-            pack.news = []
-
-        # 2) 消息概述
-        pack.extra["news_overview"] = agg.overview
-
-        # 3) 情感分析结果
-        pack.extra["news_sentiment"] = agg.sentiment_results
-
-        # 4) 综合结论
-        pack.extra["news_conclusion"] = agg._generate_conclusion()
-
-        # 5) 报告文件路径（下游组件可从此路径读取完整报告）
-        #    报告已在 agg.run() 中自动保存
-        report_dir = os.path.join(os.path.dirname(__file__), "reports")
-        report_files = sorted(
-            [f for f in os.listdir(report_dir) if f.startswith(f"news_") and symbol in f],
-            reverse=True,
-        ) if os.path.isdir(report_dir) else []
-        if report_files:
-            pack.extra["news_report_path"] = os.path.join(report_dir, report_files[0])
-        else:
-            pack.extra["news_report_path"] = ""
-
-        # 6) 报告文本（截断到前 5000 字符，完整版见文件）
-        pack.extra["news_report"] = report[:5000] if report else ""
-
-        # 7) 状态标记
-        pack.extra["news_status"] = "ok"
-        pack.extra["news_success_modules"] = agg.success_modules
-        pack.extra["news_failed_modules"] = agg.failed_modules
-
-        # 如果 agg 从基本信息中获取到了股票名称，回填给 pack
-        if agg.name and hasattr(pack, "name"):
-            pack.name = agg.name
-
-        print(f"  [NewsCollector] 完成 ✔  "
-              f"数据源 {len(agg.success_modules)}/{len(agg.success_modules) + len(agg.failed_modules)}  "
-              f"情感样本 {len(agg.sentiment_results)} 条  "
-              f"判定：{agg.overview.get('综合情绪判定', 'N/A')}")
-
-        return ComponentOutput(success=True, payload=pack)
-
-
-# ============================================================
-#  独立运行入口（不经过 pipeline 时直接使用）
+#  命令行入口
 # ============================================================
 def main():
     """命令行用法: python news.py <股票代码> [股票名称] [回溯天数]"""
@@ -764,7 +718,7 @@ def main():
     days = int(sys.argv[3]) if len(sys.argv) > 3 else 30
 
     agg = StockNewsAggregator(symbol=symbol, name=name, days=days)
-    agg.run(save_to_file=True)
+    report = agg.run(save_to_file=True)
 
 
 if __name__ == "__main__":
