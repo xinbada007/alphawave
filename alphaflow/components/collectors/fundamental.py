@@ -159,6 +159,12 @@ class FundamentalCollector(BaseCollector):
             except Exception as e:
                 print(f"  [MarketData] Additional market data fetch failed: {e}")
             
+            # --- 交易日长度控制 (Vibe Coding: 根据 context.metadata['days'] 过滤) ---
+            target_days = context.metadata.get("days", 250)
+            if len(df) > target_days:
+                print(f"  [MarketData] Slicing data to latest {target_days} trading days.")
+                df = df.tail(target_days)
+            
             # 将市场数据存储到pack中
             pack.market_data = DataFrameModel.from_df(df)
             

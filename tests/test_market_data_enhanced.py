@@ -11,13 +11,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/..')
 
 from alphaflow.core.context import GlobalContext
 from alphaflow.core.schema import AnalysisContext
-from alphaflow.components.collectors.market_data import EquityPriceCollector
 from alphaflow.components.collectors.fundamental import FundamentalCollector
 
 
 async def test_enhanced_market_data():
-    """测试增强版市场数据收集器"""
-    print("🧪 开始测试增强版市场数据收集器...")
+    """测试核心金融数据获取 (包含行情与 VWAP)"""
+    print("🧪 开始测试核心金融数据收集器 (via FundamentalCollector)...")
     
     # 创建全局上下文
     global_ctx = GlobalContext()
@@ -28,11 +27,11 @@ async def test_enhanced_market_data():
         global_context=global_ctx
     )
     
-    # 创建增强版市场数据收集器
+    # 创建收集器 (现在 FundamentalCollector 负责所有核心数据)
     collector_config = {
-        'provider': 'yfinance'  # 使用yfinance作为数据提供商
+        'provider': 'yfinance'
     }
-    collector = EquityPriceCollector(name="EnhancedMarketDataTest", config=collector_config)
+    collector = FundamentalCollector(name="CoreDataTest", config=collector_config)
     
     print("🔍 执行数据获取...")
     result = await collector.execute(context)
