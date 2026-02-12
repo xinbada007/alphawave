@@ -75,6 +75,7 @@ class ResearchPack(BaseModel):
     设计目标：高可扩展性，支持团队成员随意塞入新维度。
     """
     symbol: str
+    name: Optional[str] = None # 公司名称
     timestamp: float = Field(default_factory=time.time)
     
     # 结构化数据

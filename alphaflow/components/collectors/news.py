@@ -676,9 +676,13 @@ class NewsCollector(BaseCollector):
         symbol = pack.symbol
         # 尝试从 context 获取名称（如果上游已经填充了）
         name = getattr(pack, "name", "") or ""
-        days = context.config.get("news_days", 30) if hasattr(context, "config") and context.config else 30
-
-        print(f"\n  [NewsCollector] 启动消息面采集 → {symbol} {name}")
+        
+        # 优先从 metadata 获取 days，其次是 config，最后默认 30
+        days = context.metadata.get("days", 30)
+        if days > 90: # 限制新闻采集最长 90 天，防止 AkShare 接口压力过大
+            days = 90
+        
+        print(f"\n  [NewsCollector] 启动消息面采集 → {symbol} {name} (回溯 {days} 天)")
 
         # ------ 检查 AkShare 可用性 ------
         if not _HAS_AKSHARE:
