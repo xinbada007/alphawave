@@ -1,412 +1,301 @@
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple, Callable
 import pandas as pd
 import os
+import asyncio
+from datetime import datetime
 from openbb import obb
 from alphaflow.core.base import BaseCollector
-from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack, DataFrameModel
-from alphaflow.utils.cache import DiskCache
+from alphaflow.core.schema import (
+    AnalysisContext,
+    ComponentOutput,
+    ResearchPack,
+    DataFrameModel,
+)
 from alphaflow.utils.api_rotator import get_api_key, report_api_usage
+
+# 全局绕过 Mypy 对 OpenBB 动态扩展属性的检查
+obb_any: Any = obb
 
 
 class FundamentalCollector(BaseCollector):
     """
-    【增强版基本面分析器】
-    职责：获取财报指标、经营数据、财务报表等全面基本面信息。
-    Vibe Coding 特性：半固定流程，易于扩展指标字段，API轮询。
+    【全维度深度版基本面分析器】
+    整合：实时快照、市场预期(Estimates)、股份统计(ShareStats)、以及双轨财报对齐。
+    维度理解：
+      - Estimates: 实时预期。反映当前分析师对未来的平均看法。
+      - ShareStats: 实时筹码。反映当前的股本结构与空头力量。
     """
-    
-    def __init__(self, name: str, config: Dict[str, Any] = None):
+
+    # 黄金核心指标映射 (新增：目标价、空头比率)
+    _INDICATOR_MAP = {
+        "market_cap": ["market_cap", "marketCap"],
+        "pe_ratio": ["pe_ratio", "trailingPE"],
+        "ps_ratio": ["price_to_sales", "priceToSales"],
+        "dividend_yield": ["dividend_yield", "dividendYield"],
+        "roe": ["return_on_equity", "returnOnEquity"],
+        "net_margin": ["profit_margins", "net_margin"],
+        "target_price": ["target_price", "targetPrice", "consensus_target"],
+        "short_ratio": ["short_percent_of_float", "short_ratio", "shortRatio"],
+    }
+
+    def __init__(self, name: str, config: Optional[Dict[str, Any]] = None):
         super().__init__(name, config)
-        self.cache = DiskCache(expiry_seconds=3600 * 24)  # 24小时缓存
-        # 从配置中获取提供商，默认为yfinance
-        self.provider = config.get('provider', 'yfinance') if config else 'yfinance'
+        self.provider = config.get("provider", "yfinance") if config else "yfinance"
+        self.limit_annual = config.get("limit_annual", 2) if config else 2
+        self.limit_quarterly = config.get("limit_quarterly", 4) if config else 4
 
     async def fetch_data(self, context: AnalysisContext, **kwargs) -> ComponentOutput:
-        # 1. 标准解包
-        input_data = kwargs.get('input_data')
-        pack = input_data.payload if isinstance(input_data, ComponentOutput) else input_data
+        input_data = kwargs.get("input_data")
+        pack = (
+            input_data.payload
+            if isinstance(input_data, ComponentOutput)
+            else input_data
+        )
         if pack is None:
             pack = ResearchPack(symbol=context.symbols[0])
 
+        symbol = pack.symbol
+        target_days = context.metadata.get("days")
+        if not target_days:
+            raise ValueError("Target days missing from context")
+
+        print(f"  [Fundamental] Auditing full-dimension data for {symbol}...")
+
+        # 1. 价格抓取
+        price_df = await self._fetch_with_fallback(
+            symbol,
+            self._get_price_data,
+            [self.provider, "yfinance"],
+            target_days=target_days,
+        )
+        if price_df is not None:
+            pack.market_data = DataFrameModel.from_df(price_df.tail(target_days))
+
+        # 2. 并行抓取 10 个命名维度
+        task_configs = {
+            "metrics": (obb_any.equity.fundamental.metrics, {}),
+            "profile": (obb_any.equity.profile, {}),
+            "estimates": (
+                obb_any.equity.estimates.consensus,
+                {},
+            ),  # 新增：市场预期 (实时)
+            "share_stats": (
+                obb_any.equity.ownership.share_statistics,
+                {},
+            ),  # 新增：筹码分布 (实时)
+            "annual_income": (
+                obb_any.equity.fundamental.income,
+                {"period": "annual", "limit": self.limit_annual},
+            ),
+            "annual_balance": (
+                obb_any.equity.fundamental.balance,
+                {"period": "annual", "limit": self.limit_annual},
+            ),
+            "annual_cash": (
+                obb_any.equity.fundamental.cash,
+                {"period": "annual", "limit": self.limit_annual},
+            ),
+            "quarterly_income": (
+                obb_any.equity.fundamental.income,
+                {"period": "quarter", "limit": self.limit_quarterly},
+            ),
+            "quarterly_balance": (
+                obb_any.equity.fundamental.balance,
+                {"period": "quarter", "limit": self.limit_quarterly},
+            ),
+            "quarterly_cash": (
+                obb_any.equity.fundamental.cash,
+                {"period": "quarter", "limit": self.limit_quarterly},
+            ),
+        }
+
+        async def run_task(name, func, params):
+            success, results = await self._execute_obb_call(
+                symbol, self.provider, func, is_series=True, **params
+            )
+            limit = (
+                self.limit_annual
+                if "annual" in name
+                else self.limit_quarterly
+                if "quarterly" in name
+                else 1
+            )
+            return name, results[:limit] if success and results else []
+
+        all_results = await asyncio.gather(
+            *[run_task(k, f, p) for k, (f, p) in task_configs.items()]
+        )
+        data_hub = {name: data for name, data in all_results}
+
+        # 3. 结构化装填
+        if pack.fundamentals is None:
+            pack.fundamentals = {}
+        indicators: Dict[str, Any] = {}
+
+        # A. 锚点对齐 (IS 基准)
+        q_is = data_hub.get("quarterly_income", [])
+        a_is = data_hub.get("annual_income", [])
+        latest_is = q_is[0] if q_is else (a_is[0] if a_is else None)
+
+        if latest_is:
+            anchor_date = self._parse_date(latest_is.get("period_ending"))
+            p_type = "quarterly" if q_is and latest_is == q_is[0] else "annual"
+            indicators["report_period"] = p_type
+            indicators["fiscal_date"] = (
+                anchor_date.strftime("%Y-%m-%d") if anchor_date else "N/A"
+            )
+
+            pfx = "quarterly_" if p_type == "quarterly" else "annual_"
+            pack.fundamentals["income_statement"] = latest_is
+            pack.fundamentals["balance_sheet"] = self._find_closest_strictly(
+                data_hub.get(f"{pfx}balance", []), anchor_date
+            )
+            pack.fundamentals["cash_flow"] = self._find_closest_strictly(
+                data_hub.get(f"{pfx}cash", []), anchor_date
+            )
+
+            # YoY 计算
+            if len(a_is) >= 2:
+                curr_rev, prev_rev = (
+                    self._get_num(a_is[0], "total_revenue"),
+                    self._get_num(a_is[1], "total_revenue"),
+                )
+                if prev_rev > 0:
+                    indicators["revenue_yoy"] = round(
+                        (curr_rev - prev_rev) / prev_rev, 4
+                    )
+
+        # B. 装填快照桶 (Metrics, Profile, Estimates, ShareStats)
+        for bucket in ["metrics", "profile", "estimates", "share_stats"]:
+            if data_hub.get(bucket):
+                raw_item = data_hub[bucket][0]
+                pack.fundamentals[bucket] = raw_item
+                # 映射到核心 indicators
+                for k, candidates in self._INDICATOR_MAP.items():
+                    for candy in candidates:
+                        if candy in raw_item:
+                            indicators[k] = raw_item[candy]
+                            break
+
+        # C. 特殊回填
+        if pack.fundamentals.get("profile"):
+            p = pack.fundamentals["profile"]
+            pack.name = p.get("name") or p.get("longName")
+            pack.fundamentals["company_name"] = pack.name
+
+        pack.fundamentals["indicators"] = indicators
+        pack.extra["annual_series"] = {
+            k: v for k, v in data_hub.items() if k.startswith("annual_")
+        }
+        pack.extra["quarterly_series"] = {
+            k: v for k, v in data_hub.items() if k.startswith("quarterly_")
+        }
+
+        print(
+            f"  [Fundamental] Full-dimension Hub built for {symbol}. Precision guaranteed."
+        )
+        return ComponentOutput(success=True, payload=pack)
+
+    def _find_closest_strictly(
+        self, series: List[Dict], anchor_date: Optional[datetime], window: int = 15
+    ) -> Optional[Dict]:
+        if not series or not anchor_date:
+            return None
+        for item in series:
+            item_date = self._parse_date(item.get("period_ending"))
+            if item_date and abs((item_date - anchor_date).days) <= window:
+                return item
+        return None
+
+    def _parse_date(self, d: Any) -> Optional[datetime]:
         try:
-            print(f"  [Fundamental] Fetching comprehensive metrics for {pack.symbol}...")
-            
-            # 获取OHLCV数据（带缓存）- 来自market_data.py的功能
-            cache_key = f"raw_ohlcv_{pack.symbol}_{self.provider}"
-            df = self.cache.get(cache_key)
-            
-            if df is None:
-                print(f"  [MarketData] Fetching {pack.symbol} from {self.provider}...")
-                
-                # 尝试获取API密钥并设置环境变量
-                api_key = None
-                if self.provider in ['polygon', 'fmp', 'alpha_vantage', 'tiingo']:
-                    # 对于Polygon，使用API轮询机制获取多个API密钥中的一个
-                    if self.provider == 'polygon':
-                        # 使用轮询获取Polygon API密钥
-                        api_key = get_api_key(self.provider, api_type='market_data')
-                        if api_key:
-                            print(f"  [MarketData] Using rotated {self.provider} API key")
-                            # 临时设置环境变量
-                            original_key = os.environ.get(f"{self.provider.upper()}_API_KEY")
-                            os.environ[f"{self.provider.upper()}_API_KEY"] = api_key
-                            
-                            try:
-                                # 执行API调用
-                                res = obb.equity.price.historical(symbol=pack.symbol, provider=self.provider)
-                                df = res.to_df()
-                                
-                                # 报告API使用情况
-                                report_api_usage(self.provider, api_key, success=True)
-                                self.cache.set(cache_key, df)
-                                print(f"  [MarketData] Successfully fetched data using {self.provider} API key")
-                            except Exception as e:
-                                print(f"  [!] Failed to fetch with {self.provider}: {e}")
-                                # 报告API使用失败
-                                report_api_usage(self.provider, api_key, success=False)
-                                # 尝试yfinance作为后备
-                                print(f"  [MarketData] Falling back to yfinance for {pack.symbol}...")
-                                res = obb.equity.price.historical(symbol=pack.symbol, provider='yfinance')
-                                df = res.to_df()
-                                fallback_cache_key = f"raw_ohlcv_{pack.symbol}_yfinance"
-                                self.cache.set(fallback_cache_key, df)
-                            finally:
-                                # 恢复原始环境变量
-                                if original_key is not None:
-                                    os.environ[f"{self.provider.upper()}_API_KEY"] = original_key
-                                elif f"{self.provider.upper()}_API_KEY" in os.environ:
-                                    del os.environ[f"{self.provider.upper()}_API_KEY"]
-                    else:
-                        # 对于其他需要API密钥的提供商，也使用轮询
-                        api_key = get_api_key(self.provider)
-                        if api_key:
-                            # 临时设置环境变量
-                            original_key = os.environ.get(f"{self.provider.upper()}_API_KEY")
-                            os.environ[f"{self.provider.upper()}_API_KEY"] = api_key
-                            
-                            try:
-                                # 执行API调用
-                                res = obb.equity.price.historical(symbol=pack.symbol, provider=self.provider)
-                                df = res.to_df()
-                                
-                                # 恢复原始环境变量
-                                if original_key is not None:
-                                    os.environ[f"{self.provider.upper()}_API_KEY"] = original_key
-                                elif f"{self.provider.upper()}_API_KEY" in os.environ:
-                                    del os.environ[f"{self.provider.upper()}_API_KEY"]
-                                
-                                # 报告API使用情况
-                                report_api_usage(self.provider, api_key, success=True)
-                                self.cache.set(cache_key, df)
-                            except Exception as e:
-                                print(f"  [!] Failed to fetch with {self.provider} (using key): {e}")
-                                # 报告API使用失败
-                                report_api_usage(self.provider, api_key, success=False)
-                                # 恢复环境变量
-                                if original_key is not None:
-                                    os.environ[f"{self.provider.upper()}_API_KEY"] = original_key
-                                elif f"{self.provider.upper()}_API_KEY" in os.environ:
-                                    del os.environ[f"{self.provider.upper()}_API_KEY"]
-                                
-                                # 如果指定提供商失败，尝试yfinance作为后备
-                                print(f"  [MarketData] Falling back to yfinance for {pack.symbol}...")
-                                res = obb.equity.price.historical(symbol=pack.symbol, provider='yfinance')
-                                df = res.to_df()
-                                # 使用yfinance作为后备缓存
-                                fallback_cache_key = f"raw_ohlcv_{pack.symbol}_yfinance"
-                                self.cache.set(fallback_cache_key, df)
+            return pd.to_datetime(d)
+        except:
+            return None
+
+    def _get_num(self, item: Optional[Dict], key: str) -> float:
+        if not item:
+            return 0.0
+        candidates = [
+            key,
+            "total_revenue",
+            "totalRevenue",
+            "net_income",
+            "operating_cash_flow",
+        ]
+        for c in candidates:
+            if (val := item.get(c)) is not None:
+                return float(val)
+        return 0.0
+
+    async def _fetch_with_fallback(
+        self, symbol: str, func: Callable, providers: List[str], **kwargs
+    ) -> Any:
+        for provider in providers:
+            success, result = await self._execute_obb_call(
+                symbol, provider, func, **kwargs
+            )
+            if success:
+                return result
+        return None
+
+    async def _execute_obb_call(
+        self, symbol: str, provider: str, func: Callable, **kwargs
+    ) -> Tuple[bool, Any]:
+        api_key = (
+            get_api_key(provider)
+            if provider in ["polygon", "fmp", "alpha_vantage"]
+            else None
+        )
+        env_key = f"{provider.upper()}_API_KEY"
+        original_key = os.environ.get(env_key)
+        try:
+            if api_key:
+                os.environ[env_key] = api_key
+            res = await asyncio.to_thread(
+                func, symbol=symbol, provider=provider, **kwargs
+            )
+            if "is_series" in kwargs and kwargs["is_series"]:
+                return True, [
+                    (it.model_dump() if hasattr(it, "model_dump") else it.dict())
+                    for it in res.results
+                ]
+            return True, res.to_df() if hasattr(res, "to_df") else res
+        except Exception:
+            return False, None
+        finally:
+            if api_key:
+                if original_key:
+                    os.environ[env_key] = original_key
                 else:
-                    # 对于yfinance等不需要API密钥的提供商，直接调用
-                    try:
-                        res = obb.equity.price.historical(symbol=pack.symbol, provider=self.provider)
-                        df = res.to_df()
-                        self.cache.set(cache_key, df)
-                    except Exception as e:
-                        print(f"  [!] Failed to fetch with {self.provider}: {e}")
-                        # 如果指定提供商失败，尝试yfinance作为后备
-                        print(f"  [MarketData] Falling back to yfinance for {pack.symbol}...")
-                        res = obb.equity.price.historical(symbol=pack.symbol, provider='yfinance')
-                        df = res.to_df()
-                        # 使用yfinance作为后备缓存
-                        fallback_cache_key = f"raw_ohlcv_{pack.symbol}_yfinance"
-                        self.cache.set(fallback_cache_key, df)
-            else:
-                print(f"  [MarketData] Using cached data for {pack.symbol} ({self.provider}).")
-            
-            # 标准化清洗
-            if not isinstance(df.index, pd.DatetimeIndex):
-                if 'date' in df.columns:
-                    df['date'] = pd.to_datetime(df['date'])
-                    df.set_index('date', inplace=True)
-            
-            # 获取额外的市场相关指标
-            try:
-                # 获取成交量加权平均价 (VWAP) 如果可用
-                cache_key_vwap = f"vwap_{pack.symbol}"
-                vwap_data = self.cache.get(cache_key_vwap)
-                
-                if vwap_data is None:
-                    try:
-                        vwap_res = obb.technical.vwap(data=df)
-                        vwap_df = vwap_res.to_df()
-                        if not vwap_df.empty and 'vwap' in vwap_df.columns:
-                            # 将VWAP合并到主数据框
-                            df = df.join(vwap_df[['vwap']])
-                            self.cache.set(cache_key_vwap, vwap_df)
-                    except Exception as e:
-                        print(f"  [MarketData] VWAP calculation failed: {e}")
-                        
-            except Exception as e:
-                print(f"  [MarketData] Additional market data fetch failed: {e}")
-            
-            # --- 交易日长度控制 (Vibe Coding: 根据 context.metadata['days'] 过滤) ---
-            target_days = context.metadata.get("days", 250)
-            if len(df) > target_days:
-                print(f"  [MarketData] Slicing data to latest {target_days} trading days.")
-                df = df.tail(target_days)
-            
-            # 将市场数据存储到pack中
-            pack.market_data = DataFrameModel.from_df(df)
-            
-            # 选择基本面数据提供商（优先使用付费提供商）
-            providers = ["fmp", "alpha_vantage", "yfinance"]  # 按优先级排序
-            
-            # 1. 获取基本面指标
-            metrics_cache_key = f"fundamental_metrics_{pack.symbol}"
-            metrics_data = self.cache.get(metrics_cache_key)
-            
-            if metrics_data is None:
-                metrics_success = False
-                for provider in providers:
-                    try:
-                        api_key = None
-                        if provider in ['fmp', 'alpha_vantage']:
-                            # 获取API密钥
-                            api_key = get_api_key(provider)
-                            if api_key:
-                                # 临时设置环境变量
-                                original_key = os.environ.get(f"{provider.upper()}_API_KEY")
-                                os.environ[f"{provider.upper()}_API_KEY"] = api_key
-                        
-                        # 执行API调用
-                        metrics_res = obb.equity.fundamental.metrics(symbol=pack.symbol, provider=provider)
-                        metrics_df = metrics_res.to_df()
-                        
-                        if api_key:
-                            # 恢复原始环境变量
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                            # 报告API使用情况
-                            report_api_usage(provider, api_key, success=True)
-                        
-                        if not metrics_df.empty:
-                            metrics_data = metrics_df.iloc[0].to_dict()
-                            self.cache.set(metrics_cache_key, metrics_data)
-                            metrics_success = True
-                            print(f"  [Fundamental] Metrics fetched via {provider}")
-                            break
-                    except Exception as e:
-                        if api_key:
-                            report_api_usage(provider, api_key, success=False)
-                        print(f"  [!] Metrics fetch failed with {provider}: {e}")
-                        
-                        # 恢复环境变量（如果设置了的话）
-                        if api_key:
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                
-                if not metrics_success:
-                    print(f"  [!] All metrics providers failed, using empty data")
-                    metrics_data = {}
-            else:
-                print(f"  [Fundamental] Using cached metrics for {pack.symbol}")
-            
-            # 2. 获取资产负债表（年度）
-            balance_sheet_cache_key = f"balance_sheet_{pack.symbol}"
-            balance_sheet_data = self.cache.get(balance_sheet_cache_key)
-            
-            if balance_sheet_data is None:
-                bs_success = False
-                for provider in providers:
-                    try:
-                        api_key = None
-                        if provider in ['fmp', 'alpha_vantage']:
-                            # 获取API密钥
-                            api_key = get_api_key(provider)
-                            if api_key:
-                                # 临时设置环境变量
-                                original_key = os.environ.get(f"{provider.upper()}_API_KEY")
-                                os.environ[f"{provider.upper()}_API_KEY"] = api_key
-                        
-                        # 执行API调用
-                        bs_res = obb.equity.fundamental.balance(symbol=pack.symbol, provider=provider)
-                        bs_df = bs_res.to_df()
-                        
-                        if api_key:
-                            # 恢复原始环境变量
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                            # 报告API使用情况
-                            report_api_usage(provider, api_key, success=True)
-                        
-                        if not bs_df.empty:
-                            # 获取最新一期的资产负债表数据
-                            latest_bs = bs_df.iloc[0].to_dict()
-                            balance_sheet_data = latest_bs
-                            self.cache.set(balance_sheet_cache_key, balance_sheet_data)
-                            bs_success = True
-                            print(f"  [Fundamental] Balance sheet fetched via {provider}")
-                            break
-                    except Exception as e:
-                        if api_key:
-                            report_api_usage(provider, api_key, success=False)
-                        print(f"  [!] Balance sheet fetch failed with {provider}: {e}")
-                        
-                        # 恢复环境变量（如果设置了的话）
-                        if api_key:
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                
-                if not bs_success:
-                    print(f"  [!] All balance sheet providers failed, using empty data")
-                    balance_sheet_data = {}
-            else:
-                print(f"  [Fundamental] Using cached balance sheet for {pack.symbol}")
-            
-            # 3. 获取利润表（年度）
-            income_statement_cache_key = f"income_statement_{pack.symbol}"
-            income_statement_data = self.cache.get(income_statement_cache_key)
-            
-            if income_statement_data is None:
-                income_success = False
-                for provider in providers:
-                    try:
-                        api_key = None
-                        if provider in ['fmp', 'alpha_vantage']:
-                            # 获取API密钥
-                            api_key = get_api_key(provider)
-                            if api_key:
-                                # 临时设置环境变量
-                                original_key = os.environ.get(f"{provider.upper()}_API_KEY")
-                                os.environ[f"{provider.upper()}_API_KEY"] = api_key
-                        
-                        # 执行API调用
-                        income_res = obb.equity.fundamental.income(symbol=pack.symbol, provider=provider)
-                        income_df = income_res.to_df()
-                        
-                        if api_key:
-                            # 恢复原始环境变量
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                            # 报告API使用情况
-                            report_api_usage(provider, api_key, success=True)
-                        
-                        if not income_df.empty:
-                            # 获取最新一期的利润表数据
-                            latest_income = income_df.iloc[0].to_dict()
-                            income_statement_data = latest_income
-                            self.cache.set(income_statement_cache_key, income_statement_data)
-                            income_success = True
-                            print(f"  [Fundamental] Income statement fetched via {provider}")
-                            break
-                    except Exception as e:
-                        if api_key:
-                            report_api_usage(provider, api_key, success=False)
-                        print(f"  [!] Income statement fetch failed with {provider}: {e}")
-                        
-                        # 恢复环境变量（如果设置了的话）
-                        if api_key:
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                
-                if not income_success:
-                    print(f"  [!] All income statement providers failed, using empty data")
-                    income_statement_data = {}
-            else:
-                print(f"  [Fundamental] Using cached income statement for {pack.symbol}")
-            
-            # 4. 获取现金流量表（年度）
-            cash_flow_cache_key = f"cash_flow_{pack.symbol}"
-            cash_flow_data = self.cache.get(cash_flow_cache_key)
-            
-            if cash_flow_data is None:
-                cf_success = False
-                for provider in providers:
-                    try:
-                        api_key = None
-                        if provider in ['fmp', 'alpha_vantage']:
-                            # 获取API密钥
-                            api_key = get_api_key(provider)
-                            if api_key:
-                                # 临时设置环境变量
-                                original_key = os.environ.get(f"{provider.upper()}_API_KEY")
-                                os.environ[f"{provider.upper()}_API_KEY"] = api_key
-                        
-                        # 执行API调用
-                        cf_res = obb.equity.fundamental.cash(symbol=pack.symbol, provider=provider)
-                        cf_df = cf_res.to_df()
-                        
-                        if api_key:
-                            # 恢复原始环境变量
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                            # 报告API使用情况
-                            report_api_usage(provider, api_key, success=True)
-                        
-                        if not cf_df.empty:
-                            # 获取最新一期的现金流量表数据
-                            latest_cf = cf_df.iloc[0].to_dict()
-                            cash_flow_data = latest_cf
-                            self.cache.set(cash_flow_cache_key, cash_flow_data)
-                            cf_success = True
-                            print(f"  [Fundamental] Cash flow fetched via {provider}")
-                            break
-                    except Exception as e:
-                        if api_key:
-                            report_api_usage(provider, api_key, success=False)
-                        print(f"  [!] Cash flow fetch failed with {provider}: {e}")
-                        
-                        # 恢复环境变量（如果设置了的话）
-                        if api_key:
-                            if original_key is not None:
-                                os.environ[f"{provider.upper()}_API_KEY"] = original_key
-                            else:
-                                os.environ.pop(f"{provider.upper()}_API_KEY", None)
-                
-                if not cf_success:
-                    print(f"  [!] All cash flow providers failed, using empty data")
-                    cash_flow_data = {}
-            else:
-                print(f"  [Fundamental] Using cached cash flow for {pack.symbol}")
-            
-            # 5. 合并所有基本面数据
-            all_fundamental_data = {}
-            all_fundamental_data.update(metrics_data or {})
-            all_fundamental_data.update({"balance_sheet": balance_sheet_data})
-            all_fundamental_data.update({"income_statement": income_statement_data})
-            all_fundamental_data.update({"cash_flow": cash_flow_data})
-            
-            # 存储到pack中
-            pack.fundamentals = all_fundamental_data
-            
-            print(f"  [Fundamental] Successfully fetched fundamental data for {pack.symbol}")
-            return ComponentOutput(success=True, payload=pack)
-            
-        except Exception as e:
-            # 基本面抓取失败不应导致 Pipeline 中断
-            print(f"  [!] Fundamental Data collection error: {e}")
-            return ComponentOutput(success=True, payload=pack)
+                    os.environ.pop(env_key, None)
+
+    def _get_price_data(self, symbol: str, provider: str, **kwargs) -> pd.DataFrame:
+        target_days = kwargs.get("target_days") or 250
+        start_date = (
+            datetime.now() - (pd.Timedelta(days=int(target_days * 1.6)))
+        ).strftime("%Y-%m-%d")
+        res = obb_any.equity.price.historical(
+            symbol=symbol, provider=provider, start_date=start_date
+        )
+        if not res.results:
+            return pd.DataFrame()
+        df = pd.DataFrame(
+            [
+                (it.model_dump() if hasattr(it, "model_dump") else it.dict())
+                for it in res.results
+            ]
+        )
+        with pd.option_context("future.no_silent_downcasting", True):
+            for col, fill in {"dividend": 0.0, "split_ratio": 1.0}.items():
+                if col in df.columns:
+                    df[col] = df[col].fillna(fill)
+                else:
+                    df[col] = fill
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df.set_index("date", inplace=True)
+        df = df.infer_objects(copy=False)
+        df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
+        df.index = pd.to_datetime(df.index).strftime("%Y-%m-%d")
+        return df

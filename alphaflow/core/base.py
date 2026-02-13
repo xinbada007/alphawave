@@ -6,7 +6,7 @@ class BaseComponent(ABC):
     """
     AlphaFlow 所有组件的基类。
     """
-    def __init__(self, name: str, config: Dict[str, Any] = None):
+    def __init__(self, name: str, config: Optional[Dict[str, Any]] = None):
         self.name = name
         self.config = config or {}
 
