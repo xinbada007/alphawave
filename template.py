@@ -1,29 +1,31 @@
-# template.py
-from e2b import Template, wait_for_timeout
+from e2b import Template
 
-# 定义你的量化环境
 template = (
     Template()
-    # 1. 使用 Ubuntu 22.04 基础镜像（最稳定）
-    .from_template("hixuxin/alphawave-quant")
-    
-    # 2. 设置工作目录
-    .set_workdir("/home/user")
-    
-    # 3. 安装系统依赖 (apt_install)
+    # 1. 使用基础镜像
+    .from_template("hixuxin/openbb-box")
+
+    # 第一步：删除可能存在的旧目录（确保环境干净）
+    .run_cmd("rm -rf /home/user/alpha")
+
+    # 第二步：将本地当前目录内容拷贝到沙箱的 /home/user/alpha
+    # E2B 会自动创建不存在的父目录
+    .copy(".", "/home/user/alpha")
+
+    # 第三步：将默认工作目录设置为该目录
+    # 这样沙箱启动时，命令都会在这个目录下执行
+    .set_workdir("/home/user/alpha")
+
+    # 4. 安装系统依赖
     .apt_install(["git", "build-essential", "libpq-dev"])
-    
-    # 4. 拷贝你的整个项目到沙箱
-    # 第一个参数是本地路径，第二个是沙箱内路径
-    .copy(".", "/home/user")
-    
-    # 5. 安装 Python 依赖
-    # 这里我们直接运行 shell 命令来安装 requirements.txt 里的所有库
+
+    # 5. 安装 Python 依赖（在新的工作目录下执行）
     .run_cmd("pip install --no-cache-dir -r requirements.txt")
-    
-    # 6. 设置环境变量，确保 Python 能找到 alphaflow 文件夹
+
+    # 6. 更新环境变量
+    # 确保 PYTHONPATH 指向新的 alpha 目录
     .set_envs({
-        "PYTHONPATH": "/home/user",
+        "PYTHONPATH": "/home/user/alpha",
         "PYTHONUNBUFFERED": "1"
     })
 )
