@@ -2,6 +2,7 @@ import asyncio
 import argparse
 import requests
 
+from alphaflow.components.collectors.market_data import MarketDataCollector
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
 from alphaflow.engine.pipeline import ResearchPipeline
@@ -73,10 +74,13 @@ async def main():
 
     (
         pipeline.add_step(
-            FundamentalCollector("CoreDataFetcher")
-        ).add_step(  # 维度 1: 股价 + 经营面 (核心金融数据)
-            NewsCollector("NewsFetcher")
-        )  # 维度 2: 消息面 (舆情与情绪)
+            MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
+        ).add_step(FundamentalCollector("CoreDataFetcher"))
+        # pipeline.add_step(
+        #     FundamentalCollector("CoreDataFetcher")
+        # ).add_step(  # 维度 1: 股价 + 经营面 (核心金融数据)
+        #     NewsCollector("NewsFetcher")
+        # )  # 维度 2: 消息面 (舆情与情绪)
         # .add_step(TechnicalProcessor("IndicatorProcessor"))  # 维度 3: 技术面加工
         # .add_step(QuickChartVisualizer("ChartGen"))
     )  # 维度 4: 可视化渲染
