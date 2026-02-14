@@ -210,3 +210,77 @@ def add_api_key(provider: str, key: str, owner: str):
 def get_api_stats():
     """获取API统计的便捷函数"""
     return api_rotator.get_stats()
+
+
+# ========== 从环境变量读取API密钥 ==========
+# 支持以下环境变量:
+# - POLYGON_API_KEY
+# - ALPHA_VANTAGE_API_KEY
+# - FMP_API_KEY
+
+def _load_api_keys_from_env():
+    """从环境变量加载API密钥"""
+    import os
+    
+    # 环境变量名称映射
+    env_key_map = {
+        "polygon": "POLYGON_API_KEY",
+        "alpha_vantage": "ALPHA_VANTAGE_API_KEY",
+        "fmp": "FMP_API_KEY"
+    }
+    
+    for provider, env_var in env_key_map.items():
+        api_key = os.environ.get(env_var)
+        if api_key:
+            add_api_key(provider, api_key, "env")
+            print(f"🔑 已从环境变量加载 {provider} API密钥")
+        else:
+            print(f"⚠️  环境变量 {env_var} 未设置，{provider} 将不可用")
+
+# ========== 可选: 从 .env 文件加载 ==========
+def _load_api_keys_from_dotenv():
+    """从 .env 文件加载API密钥（如果存在）"""
+    import os
+    from pathlib import Path
+    
+    # 查找 .env 文件
+    possible_paths = [
+        Path.cwd() / ".env",
+        Path.home() / ".alphawave" / ".env",
+        Path(__file__).parent.parent.parent / ".env",
+    ]
+    
+    for dotenv_path in possible_paths:
+        if dotenv_path.exists():
+            print(f"📄 从 {dotenv_path} 加载环境变量...")
+            with open(dotenv_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = line.split("=", 1)
+                        os.environ.setdefault(key.strip(), value.strip())
+            break
+
+# 加载顺序: .env 文件 > 环境变量
+_load_api_keys_from_dotenv()
+_load_api_keys_from_env()
+
+# ========== 初始化时设置环境变量（供OpenBB使用）==========
+_API_KEY_ENV_MAP = {
+    "polygon": "POLYGON_API_KEY",
+    "alpha_vantage": "ALPHA_VANTAGE_API_KEY", 
+    "fmp": "FMP_API_KEY"
+}
+
+def _init_api_keys():
+    """确保API密钥已设置到环境变量（供OpenBB使用）"""
+    import os
+    for provider, env_var in _API_KEY_ENV_MAP.items():
+        # 从 api_rotator 获取已注册的密钥
+        if provider in api_rotator.keys and api_rotator.keys[provider]:
+            api_key = api_rotator.keys[provider][0].key
+            os.environ[env_var] = api_key
+            print(f"🔑 已设置 {provider} API密钥到环境变量 {env_var}")
+
+# 模块加载时初始化
+_init_api_keys()

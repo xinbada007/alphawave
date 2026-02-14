@@ -2,6 +2,12 @@ import asyncio
 import argparse
 import requests
 
+# ==== 初始化 API Keys (必须在导入 OpenBB 之前) ====
+import os
+from alphaflow.utils.api_rotator import _init_api_keys
+_init_api_keys()
+# ==============================================
+
 from alphaflow.components.collectors.market_data import MarketDataCollector
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
@@ -56,12 +62,22 @@ async def main():
     parser.add_argument(
         "--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)"
     )
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default="yfinance",
+        choices=["yfinance", "polygon", "fmp", "alpha_vantage"],
+        help="数据Provider (默认: yfinance)"
+    )
     args = parser.parse_args()
+
+    # 显示配置
+    print(f"\n📊 配置: Provider={args.provider}, Symbol={args.symbols}, Days={args.days}")
 
     # 1. 配置全局环境
     context = AnalysisContext(
         symbols=args.symbols,
-        metadata={"days": args.days},  # 将交易日需求存入元数据
+        metadata={"days": args.days, "provider": args.provider},
     )
     global_ctx = GlobalContext()
     if args.proxy:
@@ -74,8 +90,10 @@ async def main():
 
     (
         pipeline.add_step(
-            MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
-        ).add_step(FundamentalCollector("CoreDataFetcher"))
+            MarketDataCollector("MarketDataFetcher", config={"provider": args.provider})
+        ).add_step(
+            FundamentalCollector("CoreDataFetcher", config={"provider": args.provider})
+        )
         # pipeline.add_step(
         #     FundamentalCollector("CoreDataFetcher")
         # ).add_step(  # 维度 1: 股价 + 经营面 (核心金融数据)
