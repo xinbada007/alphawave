@@ -346,7 +346,7 @@ class FinancialCalculator:
 # ==========================================
 class BaseFetcher:
     async def fetch_all(
-        self, symbol: str, limit_a: int, limit_q: int
+        self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
     ) -> Dict[str, List[Dict]]:
         raise NotImplementedError
 
@@ -356,9 +356,9 @@ class YFinanceFetcher(BaseFetcher):
         self.provider, self.parent = provider, parent
 
     async def fetch_all(
-        self, symbol: str, limit_a: int, limit_q: int
+        self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
     ) -> Dict[str, List[Dict]]:
-        task_names = [
+        all_task_names = [
             "metrics",
             "profile",
             "estimates",
@@ -370,6 +370,7 @@ class YFinanceFetcher(BaseFetcher):
             "q_balance",
             "q_cash",
         ]
+        target_tasks = tasks if tasks else all_task_names
 
         async def fetch_item(name: str):
             p: Dict[str, Any] = {}
@@ -396,8 +397,18 @@ class YFinanceFetcher(BaseFetcher):
             )
             return name, res or []
 
-        all_res = await asyncio.gather(*[fetch_item(tn) for tn in task_names])
-        return {name: data for name, data in all_res}
+        all_res = await asyncio.gather(*[fetch_item(tn) for tn in target_tasks])
+        result = {name: data for name, data in all_res}
+        if tasks is None:
+            for name in all_task_names:
+                if name not in result:
+                    result[name] = []
+        return result
+        for name in all_task_names:
+            if name not in result:
+                result[name] = []
+
+        return result
 
 
 class AkShareFetcher(BaseFetcher):
@@ -405,7 +416,7 @@ class AkShareFetcher(BaseFetcher):
         self.parent = parent
 
     async def fetch_all(
-        self, symbol: str, limit_a: int, limit_q: int
+        self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
     ) -> Dict[str, List[Dict]]:
         code = symbol.split(".")[0].zfill(5)
 
@@ -565,10 +576,46 @@ class FundamentalCollector(BaseCollector):
                 )
 
         is_cum = any(symbol.upper().endswith(s) for s in [".HK", ".SH", ".SZ", ".SS"])
-        fetcher = (
-            AkShareFetcher(self) if is_cum else YFinanceFetcher(self.provider, self)
-        )
-        db = await fetcher.fetch_all(symbol, self.limit_annual, self.limit_quarterly)
+        is_hk = symbol.upper().endswith(".HK")
+
+        if is_hk:
+            # 🟢 港股混合编排模式：并行执行
+            ak_fetcher = AkShareFetcher(self)
+            yf_fetcher = YFinanceFetcher(self.provider, self)
+
+            # Task 1: AkShare 拿所有核心财报
+            ak_task = ak_fetcher.fetch_all(
+                symbol, self.limit_annual, self.limit_quarterly
+            )
+
+            # Task 2: YFinance 拿补丁数据 (Estimates + Share Stats)
+            # 注意：YFinanceFetcher 内部会自动处理 clean_symbol
+            yf_task = yf_fetcher.fetch_all(
+                symbol,
+                self.limit_annual,
+                self.limit_quarterly,
+                tasks=["estimates", "share_stats"],
+            )
+
+            db_ak, db_yf = await asyncio.gather(ak_task, yf_task)
+
+            # 数据拼图：以 AkShare 为主，用 YFinance 补全缺失维度
+            db = {**db_ak, **db_yf}
+            for k, v in db_yf.items():
+                if v:  # 只有 YFinance 真正拿到了数据，才更新到 db 里
+                    db[k] = v
+        elif is_cum:
+            # 🟡 A股模式：保持原有的纯 AkShare 逻辑
+            ak_fetcher = AkShareFetcher(self)
+            db = await ak_fetcher.fetch_all(
+                symbol, self.limit_annual, self.limit_quarterly
+            )
+        else:
+            # 🔵 美股/其他：纯 YFinance 路径
+            fetcher = YFinanceFetcher(self.provider, self)
+            db = await fetcher.fetch_all(
+                symbol, self.limit_annual, self.limit_quarterly
+            )
 
         if pack.fundamentals is None:
             pack.fundamentals = {}
@@ -603,11 +650,18 @@ class FundamentalCollector(BaseCollector):
             )
 
             # 计算引擎：执行切片拼接 TTM 逻辑
-            latest_ana = (
-                db.get("q_analysis", [None])[0]
-                if p_type == "quarterly"
-                else db.get("a_analysis", [None])[0]
+            analysis_pool = db.get(
+                "q_analysis" if p_type == "quarterly" else "a_analysis", []
             )
+            latest_ana = self._find_closest_strictly(analysis_pool, anchor_date)
+            if latest_ana:
+                print(
+                    f"  [Alignment] Matched analysis indicators for date: {latest_ana.get('period_ending')}"
+                )
+            else:
+                print(
+                    f"  [Alignment] Warning: No matching indicators found for {anchor_date.strftime('%Y-%m-%d')}"
+                )
             mcap_input = _get_num(pack.fundamentals.get("metrics"), "MCAP")
             if mcap_input is None and latest_price is not None:
                 # 尝试用 (Price * Shares) 估算 MCAP
@@ -630,6 +684,18 @@ class FundamentalCollector(BaseCollector):
                     pack.fundamentals["metrics"]["market_cap_rmb"] = mcap_input
                     pack.fundamentals["metrics"]["fx_rate"] = fx_rate
 
+            q_ana_pool = db.get("q_analysis", [])
+            a_ana_pool = db.get("a_analysis", [])
+            # 当前周期指标：动态根据 p_type 选池，并与 anchor_date 严格对齐
+            current_ana_pool = q_ana_pool if p_type == "quarterly" else a_ana_pool
+            latest_ana = self._find_closest_strictly(current_ana_pool, anchor_date)
+            # 年度对比指标：固定从 a_ana_pool 选，并与 anchor_date 对齐
+            latest_annual_ana = self._find_closest_strictly(a_ana_pool, anchor_date)
+            if latest_ana:
+                print(
+                    f"  [Alignment] Matched indicators for: {latest_ana.get('period_ending')}"
+                )
+
             indicators = FinancialCalculator.derive_indicators(
                 latest_is,
                 cur_bs,
@@ -641,7 +707,7 @@ class FundamentalCollector(BaseCollector):
                 p_type,
                 mcap_input,
                 latest_ana,
-                db.get("a_analysis", [None])[0],
+                latest_annual_ana,
                 is_cumulative=is_cum,
             )
             indicators.update(
