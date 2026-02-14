@@ -29,7 +29,7 @@ def verify():
 
         # 3. 运行你的 main.py 测试
         print("\n--- 3. 运行 main.py 测试 ---")
-        run_main = sbx.commands.run("python3 main.py")
+        run_main = sbx.commands.run("python3 main.py --symbols 0700.HK")
         
         print("--- [stdout] ---")
         print(run_main.stdout)
