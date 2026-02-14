@@ -38,29 +38,33 @@ class DataFrameModel(BaseModel):
         """还原为 Pandas DataFrame，利用 schema_meta 恢复精确类型"""
         if not self.data_json:
             return pd.DataFrame()
-            
+
         # 1. 加载基础数据
         df = pd.read_json(io.StringIO(self.data_json), orient="records")
-        
+
         # 2. 根据 schema_meta 强制恢复类型
         for col, dtype_str in self.schema_meta.items():
             if col not in df.columns:
                 continue
-                
+
             try:
+                target_type: Any = dtype_str
                 if "datetime" in dtype_str:
                     # 确定性恢复时间类型
                     df[col] = pd.to_datetime(df[col])
                 elif "int" in dtype_str:
-                    # 恢复整数类型（防止 JSON 默认转成 float）
-                    df[col] = pd.to_datetime(df[col]) if "datetime" in dtype_str else pd.to_numeric(df[col], errors="coerce").fillna(0).astype(dtype_str)
+                    df[col] = (
+                        pd.to_numeric(df[col], errors="coerce")
+                        .fillna(0)
+                        .astype(target_type)
+                    )
                 else:
                     # 尝试恢复其他类型
-                    df[col] = df[col].astype(dtype_str)
+                    df[col] = df[col].astype(target_type)
             except Exception:
                 # 容错处理：如果强制转换失败，保留 read_json 的默认处理
                 continue
-                
+
         return df
 
 

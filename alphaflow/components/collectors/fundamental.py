@@ -577,6 +577,7 @@ class FundamentalCollector(BaseCollector):
 
         q_inc, a_inc = db.get("q_income", []), db.get("a_income", [])
         latest_is = q_inc[0] if q_inc else (a_inc[0] if a_inc else None)
+        q_suffix = "_ytd" if is_cum else "_discrete"
 
         if latest_is:
             latest_d_raw = latest_is.get("period_ending")
@@ -591,11 +592,13 @@ class FundamentalCollector(BaseCollector):
                 self._find_closest_strictly(all_bs, anchor_date),
                 self._find_closest_strictly(all_cf, anchor_date),
             )
+
+            stmt_suffix = "_annual" if p_type == "annual" else f"_quarterly{q_suffix}"
             pack.fundamentals.update(
                 {
-                    "income_statement": latest_is,
-                    "balance_sheet": cur_bs,
-                    "cash_flow": cur_cf,
+                    f"income_statement{stmt_suffix}": latest_is,
+                    f"balance_sheet{stmt_suffix}": cur_bs,
+                    f"cash_flow{stmt_suffix}": cur_cf,
                 }
             )
 
@@ -614,6 +617,18 @@ class FundamentalCollector(BaseCollector):
                     print(
                         f"  [Fundamental] Estimated MCAP using Price ({latest_price}) * Shares ({shares})"
                     )
+            if is_cum and symbol.upper().endswith(".HK") and mcap_input is not None:
+                # 执行港股汇率对齐 (HKD -> RMB)
+                fx_rate = await self._get_realtime_fx_rate()
+                mcap_rmb = mcap_input * fx_rate
+                print(
+                    f"  [Currency] Real-time Aligned Market Cap to RMB: {mcap_input:,.0f} HKD -> {mcap_rmb:,.0f} RMB (Rate: {fx_rate:.4f})"
+                )
+                mcap_input = mcap_rmb
+                metrics_obj = pack.fundamentals.get("metrics")
+                if isinstance(metrics_obj, dict):
+                    pack.fundamentals["metrics"]["market_cap_rmb"] = mcap_input
+                    pack.fundamentals["metrics"]["fx_rate"] = fx_rate
 
             indicators = FinancialCalculator.derive_indicators(
                 latest_is,
@@ -641,17 +656,21 @@ class FundamentalCollector(BaseCollector):
 
         if pack.fundamentals.get("profile"):
             pack.name = pack.fundamentals["profile"].get("name")
+
         pack.extra.update(
             {
                 "annual_series": {
                     k: db.get(k, []) for k in ["a_income", "a_balance", "a_cash"]
                 },
-                "quarterly_series": {
-                    k: db.get(k, []) for k in ["q_income", "q_balance", "q_cash"]
+                f"quarterly_series{q_suffix}": {
+                    f"{k}{q_suffix}": db.get(k, [])
+                    for k in ["q_income", "q_balance", "q_cash"]
                 },
                 "akshare_analysis": {
                     "annual": db.get("a_analysis", []),
-                    "quarterly": db.get("q_analysis", []),
+                    "quarterly_cumulative_ytd"
+                    if is_cum
+                    else "quarterly_discrete": db.get("q_analysis", []),
                 },
             }
         )
@@ -706,3 +725,19 @@ class FundamentalCollector(BaseCollector):
             return True, res.to_df() if hasattr(res, "to_df") else res
         except:
             return False, None
+
+    async def _get_realtime_fx_rate(self) -> float:
+        """从 AkShare (百度源) 获取实时 HKD/CNY 汇率"""
+        try:
+            # 百度源实时行情
+            df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
+            subset = df[df["名称"].str.contains("港元", na=False)]
+            if not subset.empty:
+                # 接口返回的是 CNY/HKD (1人民币兑多少港元)
+                cny_to_hkd = float(subset.iloc[0]["最新价"])
+                if cny_to_hkd > 0:
+                    return 1.0 / cny_to_hkd
+            return 0.90  # 如果没找到，返回合理默认值
+        except Exception as e:
+            print(f"  [Fundamental] FX fetch failed: {e}")
+            return 0.90  # Fallback
