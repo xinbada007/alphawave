@@ -1,9 +1,10 @@
 import pandas as pd
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import akshare as ak  # type: ignore
+import tushare as ts
 from openbb import obb
 
 from alphaflow.core.base import BaseCollector
@@ -14,6 +15,7 @@ from alphaflow.core.schema import (
     DataFrameModel,
 )
 from alphaflow.utils.api_rotator import get_api_key
+from alphaflow.utils.tushare_config import get_tushare_token
 
 # ==========================================
 # 1. Fetcher 策略接口与实现
@@ -106,6 +108,99 @@ class AkSharePriceFetcher(PriceFetcher):
             return df
         except Exception as e:
             print(f"  [AkShareFetcher] Error: {e}")
+            return pd.DataFrame()
+
+
+class TusharePriceFetcher(PriceFetcher):
+    """A股专用的 Tushare 抓取器"""
+
+    def __init__(self):
+        self._init_tushare()
+    
+    def _init_tushare(self):
+        """初始化Tushare API（自动解密）"""
+        token = get_tushare_token()
+        ts.set_token(token)
+        self.pro = ts.pro_api()
+    
+    @staticmethod
+    def normalize_symbol(symbol: str) -> str:
+        """标准化A股代码格式"""
+        symbol = symbol.strip().upper()
+        VALID_EXCHANGES = {"SZ", "SH", "BJ"}
+        
+        if "." in symbol:
+            parts = symbol.split(".")
+            if len(parts) == 2 and len(parts[0]) == 6:
+                exchange = parts[1]
+                if exchange in VALID_EXCHANGES:
+                    return f"{parts[0]}.{exchange}"
+        
+        # 纯数字代码，根据规则添加后缀
+        if len(symbol) == 6 and symbol.isdigit():
+            first_digit = symbol[0]
+            if first_digit in ("0", "1", "3"):
+                return f"{symbol}.SZ"
+            elif first_digit in ("4", "8"):
+                return f"{symbol}.BJ"
+            else:
+                return f"{symbol}.SH"
+        
+        return symbol
+
+    async def fetch(self, symbol: str, days: int) -> pd.DataFrame:
+        symbol = self.normalize_symbol(symbol)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=int(days * 1.5))
+        start_date_str = start_date.strftime("%Y%m%d")
+        
+        try:
+            df = await asyncio.to_thread(
+                ts.pro_bar,
+                ts_code=symbol,
+                adj="qfq",
+                start_date=start_date_str,
+                freq="D"
+            )
+            
+            if df is None or df.empty:
+                return pd.DataFrame()
+            
+            # 标准化列名
+            column_mapping = {
+                "trade_date": "date",
+                "open": "open",
+                "high": "high", 
+                "low": "low",
+                "close": "close",
+                "vol": "volume",
+                "amount": "amount"
+            }
+            df = df.rename(columns=column_mapping)
+            
+            # 转换日期格式并设为索引
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date")
+            df = df.sort_index(ascending=True)
+            df = df.tail(days)
+            
+            # 确保数值类型正确
+            numeric_cols = ["open", "high", "low", "close", "volume", "amount"]
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+            
+            # 添加兼容列
+            df["dividend"] = 0.0
+            df["split_ratio"] = 1.0
+            df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
+            
+            # 统一索引格式
+            df.index = pd.to_datetime(df.index).strftime("%Y-%m-%d")
+            return df
+            
+        except Exception as e:
+            print(f"  [TushareFetcher] Error: {e}")
             return pd.DataFrame()
 
 
@@ -219,9 +314,13 @@ class MarketDataCollector(BaseCollector):
 
         # 2. 路由策略定义
         fetchers: List[PriceFetcher] = []
-        if symbol.upper().endswith(".HK"):
+        symbol_upper = symbol.upper()
+        if symbol_upper.endswith(".HK"):
             # 港股：首选 AkShare
             fetchers = [AkSharePriceFetcher(), OpenBBPriceFetcher("yfinance")]
+        elif symbol_upper.endswith((".SH", ".SZ", ".BJ")):
+            # A股：首选 Tushare
+            fetchers = [TusharePriceFetcher(), AkSharePriceFetcher()]
         else:
             # 美股/其他：根据配置顺序尝试
             fetchers = [
