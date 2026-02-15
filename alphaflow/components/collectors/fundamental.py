@@ -411,6 +411,237 @@ class YFinanceFetcher(BaseFetcher):
         return result
 
 
+class AkShareAshareFetcher(BaseFetcher):
+    """A股财务数据获取器 - 使用AkShare获取A股财报数据"""
+    
+    def __init__(self, parent):
+        self.parent = parent
+    
+    async def fetch_all(
+        self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
+    ) -> Dict[str, List[Dict]]:
+        """获取A股财务数据"""
+        code = symbol.split(".")[0]
+        
+        # 初始化返回结构，与 AkShareFetcher/YFinanceFetcher 对齐
+        result = {
+            "metrics": [],
+            "profile": [],
+            "estimates": [],
+            "share_stats": [{"sharesOutstanding": None, "floatShares": None}],
+            "a_income": [],
+            "q_income": [],
+            "a_balance": [],
+            "q_balance": [],
+            "a_cash": [],
+            "q_cash": [],
+            "a_analysis": [],
+            "q_analysis": [],
+        }
+        
+        try:
+            # 1. 获取基本信息（股票概况）
+            stock_info = await asyncio.to_thread(ak.stock_individual_info_em, symbol=code)
+            if not stock_info.empty:
+                info = stock_info.set_index('item').to_dict()['value']
+                
+                # 总市值转换为亿元（同港股逻辑）
+                mcap_raw = info.get('总市值', 0)
+                float_raw = info.get('流通市值', 0)
+                mcap = mcap_raw / 1e8 if mcap_raw else None
+                float_cap = float_raw / 1e8 if float_raw else None
+                
+                # 股本信息（转换为股数）
+                total_shares = info.get('总股本')
+                float_shares = info.get('流通股')
+                if total_shares:
+                    total_shares = total_shares * 1e4  # 万股转股
+                if float_shares:
+                    float_shares = float_shares * 1e4
+                
+                result["share_stats"] = [{
+                    "sharesOutstanding": total_shares,
+                    "floatShares": float_shares,
+                }]
+            else:
+                info = {}
+                mcap = None
+            
+            # 2. 获取财务摘要（关键指标）
+            try:
+                fin_abstract = await asyncio.to_thread(
+                    ak.stock_financial_abstract_ths, symbol=code, indicator="按报告期"
+                )
+                if not fin_abstract.empty:
+                    # 取最新数据
+                    latest = fin_abstract.iloc[-1]
+                    
+                    # 构建 metrics（与港股 AkShareFetcher 对齐）
+                    pe = latest.get('市盈率')
+                    pb = latest.get('市净率')
+                    
+                    result["metrics"] = [{
+                        "marketCap": mcap,
+                        "trailingPE": float(pe) if pe is not None else None,
+                        "priceToBook": float(pb) if pb is not None else None,
+                        "currency": "CNY",
+                    }]
+                    
+                    # 构建 analysis 数据（与港股结构对齐）
+                    analysis_record = {
+                        "period_ending": str(latest.get('报告期', '')),
+                        "ROE_YEARLY": float(latest.get('净资产收益率', 0)) / 100 if latest.get('净资产收益率') else None,
+                        "OPERATE_INCOME_YOY": float(latest.get('营收同比', 0)) / 100 if latest.get('营收同比') else None,
+                        "HOLDER_PROFIT_YOY": float(latest.get('净利润同比', 0)) / 100 if latest.get('净利润同比') else None,
+                        "NET_PROFIT_RATIO": float(latest.get('净利率', 0)) / 100 if latest.get('净利率') else None,
+                        "CURRENT_RATIO": float(latest.get('流动比率', 0)) if latest.get('流动比率') else None,
+                    }
+                    
+                    # 根据报告期类型放入 annual 或 quarterly
+                    report_date = str(latest.get('报告期', ''))
+                    if report_date.endswith('12-31') or report_date.endswith('1231'):
+                        result["a_analysis"] = [analysis_record]
+                    else:
+                        result["q_analysis"] = [analysis_record]
+            except Exception as e:
+                print(f"  [AkShareAshare] Warning: Failed to fetch financial abstract: {e}")
+                # 即使失败也保留 metrics
+                if mcap:
+                    result["metrics"] = [{"marketCap": mcap, "currency": "CNY"}]
+            
+            # 3. 获取财务报表（利润表、资产负债表、现金流量表）
+            try:
+                # 利润表
+                income_df = await asyncio.to_thread(
+                    ak.stock_financial_report_sina, stock=code, symbol="利润表"
+                )
+                if not income_df.empty:
+                    # 转换为标准格式
+                    income_records = self._transform_financial_df(income_df, "income")
+                    # 按年报/季报分组
+                    for rec in income_records:
+                        if rec.get("period_ending", "").endswith("12-31"):
+                            result["a_income"].append(rec)
+                        else:
+                            result["q_income"].append(rec)
+                    # 限制数量
+                    result["a_income"] = result["a_income"][:limit_a]
+                    result["q_income"] = result["q_income"][:limit_q]
+            except Exception as e:
+                print(f"  [AkShareAshare] Warning: Failed to fetch income statement: {e}")
+            
+            try:
+                # 资产负债表
+                balance_df = await asyncio.to_thread(
+                    ak.stock_financial_report_sina, stock=code, symbol="资产负债表"
+                )
+                if not balance_df.empty:
+                    balance_records = self._transform_financial_df(balance_df, "balance")
+                    for rec in balance_records:
+                        if rec.get("period_ending", "").endswith("12-31"):
+                            result["a_balance"].append(rec)
+                        else:
+                            result["q_balance"].append(rec)
+                    result["a_balance"] = result["a_balance"][:limit_a]
+                    result["q_balance"] = result["q_balance"][:limit_q]
+            except Exception as e:
+                print(f"  [AkShareAshare] Warning: Failed to fetch balance sheet: {e}")
+            
+            try:
+                # 现金流量表
+                cash_df = await asyncio.to_thread(
+                    ak.stock_financial_report_sina, stock=code, symbol="现金流量表"
+                )
+                if not cash_df.empty:
+                    cash_records = self._transform_financial_df(cash_df, "cash")
+                    for rec in cash_records:
+                        if rec.get("period_ending", "").endswith("12-31"):
+                            result["a_cash"].append(rec)
+                        else:
+                            result["q_cash"].append(rec)
+                    result["a_cash"] = result["a_cash"][:limit_a]
+                    result["q_cash"] = result["q_cash"][:limit_q]
+            except Exception as e:
+                print(f"  [AkShareAshare] Warning: Failed to fetch cash flow: {e}")
+            
+            # 4. 构建 profile（公司概况）
+            result["profile"] = [{
+                "name": info.get("股票名称") or info.get("股票简称"),
+                "listingDate": info.get("上市时间"),
+                "industry": info.get("所属行业") or info.get("行业"),
+                "fiscalYearEnd": "12-31",  # A股通常为12月31日
+            }]
+            
+        except Exception as e:
+            print(f"  [AkShareAshare] Error fetching data for {code}: {e}")
+        
+        return result
+    
+    def _transform_financial_df(self, df: pd.DataFrame, stmt_type: str) -> List[Dict]:
+        """将财务DataFrame转换为标准记录列表"""
+        if df.empty:
+            return []
+        
+        records = []
+        # 假设第一列是报告期，其余是科目
+        date_col = df.columns[0]
+        
+        for idx, row in df.iterrows():
+            record = {"period_ending": str(row.get(date_col, ""))}
+            
+            # 根据报表类型映射关键字段（与港股/YFinance对齐）
+            if stmt_type == "income":
+                # 收入表字段映射
+                field_mapping = {
+                    "营业收入": "REV",
+                    "营业总收入": "REV",
+                    "净利润": "NI",
+                    "归属于母公司股东的净利润": "NI",
+                    "营业利润": "OI",
+                    "EBIT": "OI",
+                }
+            elif stmt_type == "balance":
+                # 资产负债表字段映射
+                field_mapping = {
+                    "资产总计": "ASSETS",
+                    "负债合计": "LIAB",
+                    "所有者权益合计": "EQUITY",
+                    "股东权益合计": "EQUITY",
+                    "流动资产合计": "C_ASSETS",
+                    "流动负债合计": "C_LIAB",
+                    "货币资金": "CASH",
+                }
+            else:  # cash
+                # 现金流量表字段映射
+                field_mapping = {
+                    "经营活动产生的现金流量净额": "OCF",
+                    "经营活动现金流量净额": "OCF",
+                    "投资活动产生的现金流量净额": "ICF",
+                    "筹资活动产生的现金流量净额": "FCF",
+                    "现金及现金等价物净增加额": "NET_CASH",
+                }
+            
+            # 尝试映射字段
+            for cn_field, std_field in field_mapping.items():
+                if cn_field in df.columns:
+                    val = row.get(cn_field)
+                    if val is not None and not pd.isna(val):
+                        record[std_field] = float(val)
+            
+            # 保留所有原始字段
+            for col in df.columns:
+                if col != date_col and col not in record:
+                    val = row.get(col)
+                    if val is not None and not pd.isna(val):
+                        record[col] = val
+            
+            records.append(record)
+        
+        # 按日期排序（最新的在前）
+        records.sort(key=lambda x: x.get("period_ending", ""), reverse=True)
+        return records
+
+
 class AkShareFetcher(BaseFetcher):
     def __init__(self, parent):
         self.parent = parent
@@ -605,9 +836,9 @@ class FundamentalCollector(BaseCollector):
                 if v:  # 只有 YFinance 真正拿到了数据，才更新到 db 里
                     db[k] = v
         elif is_cum:
-            # 🟡 A股模式：保持原有的纯 AkShare 逻辑
-            ak_fetcher = AkShareFetcher(self)
-            db = await ak_fetcher.fetch_all(
+            # 🟡 A股模式：使用专门的A股AkShare获取器
+            ak_ashare_fetcher = AkShareAshareFetcher(self)
+            db = await ak_ashare_fetcher.fetch_all(
                 symbol, self.limit_annual, self.limit_quarterly
             )
         else:
