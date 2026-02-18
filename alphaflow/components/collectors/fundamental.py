@@ -13,110 +13,314 @@ from alphaflow.core.schema import (
     ResearchPack,
     DataFrameModel,
 )
+from alphaflow.core.data_utils import (
+    FIELD_CHAINS,
+    FINANCIAL_FIELD_CHAINS,
+    MARKET_FIELD_CHAINS,
+    find_closest_strictly,
+    get_field_value,
+    get_fcf_raw,
+    get_market_type,
+    MarketType,
+)
 from alphaflow.utils.api_rotator import get_api_key, report_api_usage
 
 # 全局绕过 Mypy 检查
 obb_any: Any = obb
 
 # ==========================================
-# 1. 核心数据字典 (支持多市场语义拦截)
+# 1. 本地别名（向后兼容）
 # ==========================================
-FIELD_CHAINS = {
-    "REV": [
-        "total_revenue",
-        "totalRevenue",
-        "OPERATE_INCOME",
-        "营业总收入",
-        "营业额",
-        "收益",
-        "营业收入",
-    ],
-    "NI": [
-        "net_income",
-        "netIncome",
-        "HOLDER_PROFIT",
-        "归母净利润",
-        "股东应占溢利",
-        "期内利润",
-        "期内盈利",
-        "净利润",
-    ],
-    "OI": ["operating_income", "operatingIncome", "经营溢利", "营业利润", "PER_OI"],
-    "OCF": [
-        "operating_cash_flow",
-        "totalCashFromOperatingActivities",
-        "经营业务现金净额",
-        "经营活动产生的现金流量净额",
-        "PER_NETCASH_OPERATE",
-    ],
-    "FCF": ["free_cash_flow", "freeCashflow", "自由现金流"],
-    "CAPEX": [
-        "capital_expenditure",
-        "capitalExpenditures",
-        "购建固定资产、无形资产和其他长期资产支付的现金",
-        "购建固定资产",
-        "资本开支",
-    ],
-    "ASSETS": ["total_assets", "totalAssets", "资产总额", "总资产", "资产合计"],
-    "C_ASSETS": [
-        "total_current_assets",
-        "current_assets",
-        "totalCurrentAssets",
-        "流动资产合计",
-    ],
-    "LIAB": [
-        "total_liabilities_net_minority_interest",
-        "total_liabilities",
-        "totalLiabilities",
-        "总负债",
-        "负债合计",
-    ],
-    "C_LIAB": ["current_liabilities", "totalCurrentLiabilities", "流动负债合计"],
-    "EQUITY": [
-        "total_common_equity",
-        "total_equity",
-        "totalStockholderEquity",
-        "总权益",
-        "股东权益",
-        "权益总额",
-        "所有者权益合计",
-    ],
-    "MCAP": ["marketCap", "market_cap", "marketCap", "总市值", "总市值(港元)"],
-    "SHARES": ["sharesOutstanding", "shares_outstanding", "已发行股本(股)"],
-}
-
-
-def _get_num(item: Optional[Dict], field_alias: str) -> Optional[float]:
-    """确定性字段提取逻辑"""
-    if not item:
-        return None
-    candidates = FIELD_CHAINS.get(field_alias, [field_alias])
-    for c in candidates:
-        v = item.get(c)
-        if v is not None and v != "" and not pd.isna(v):
-            try:
-                return float(v)
-            except (ValueError, TypeError):
-                continue
-    return None
-
-
-def _get_fcf_raw(item: Optional[Dict]) -> Optional[float]:
-    """物理推导 FCF (OCF - abs(Capex))"""
-    if not item:
-        return None
-    f = _get_num(item, "FCF")
-    if f is not None:
-        return f
-    o = _get_num(item, "OCF")
-    c = _get_num(item, "CAPEX")
-    if o is not None and c is not None:
-        return o - abs(c)
-    return None
-
+# 使用共享模块的函数，本地保留别名以保持兼容性
+_get_num = get_field_value
+_get_fcf_raw = get_fcf_raw
 
 # ==========================================
-# 2. 计算引擎层 (切片拼接法 TTM + 严密年化)
+# 2. 汇率获取函数 (模块级)
+# ==========================================
+async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[float]:
+    """
+    从 AkShare 获取实时汇率
+    
+    Args:
+        from_currency: 源币种 (如 "HKD", "USD")
+        to_currency: 目标币种 (默认 CNY)
+    
+    Returns:
+        汇率值，如果获取失败返回 None
+    """
+    try:
+        if from_currency == "HKD":
+            # 百度源实时行情 - HKD/CNY
+            df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
+            subset = df[df["名称"].str.contains("港元", na=False)]
+            if not subset.empty:
+                # 接口返回的是 CNY/HKD (1人民币兑多少港元)
+                cny_to_hkd = float(subset.iloc[0]["最新价"])
+                if cny_to_hkd > 0:
+                    return 1.0 / cny_to_hkd  # 转换为 HKD/CNY
+        elif from_currency == "USD":
+            # 百度源实时行情 - USD/CNY
+            df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
+            subset = df[df["名称"].str.contains("美元", na=False)]
+            if not subset.empty:
+                # 接口返回的是 CNY/USD (1人民币兑多少美元)
+                cny_to_usd = float(subset.iloc[0]["最新价"])
+                if cny_to_usd > 0:
+                    return 1.0 / cny_to_usd  # 转换为 USD/CNY
+        return None
+    except Exception as e:
+        print(f"  [FX] Fetch failed for {from_currency}/{to_currency}: {e}")
+        return None
+
+def audit_currency_context(
+    metrics: Dict[str, Any], 
+    ttm_financials: Dict[str, Optional[float]],
+    market_type: MarketType = MarketType.UNKNOWN
+) -> Dict[str, Any]:
+    """
+    双层审计机制：
+    1. 元数据审计 (Metadata Audit): 直接检查原始字段名的币种标签 (针对 AkShare)。
+    2. 数学审计 (Math Audit): PE/PB 锚点对撞 (针对 YFinance/通用)。
+    """
+    
+    market_to_currency = {
+        MarketType.US: "USD",
+        MarketType.HK: "HKD",
+        MarketType.CN: "CNY",
+        MarketType.UNKNOWN: "UNKNOWN"
+    }
+ # 获取默认货币字符串 (如 "USD")
+    default_curr = market_to_currency.get(market_type, "UNKNOWN")
+    
+    audit_report = {
+        "is_misaligned": False,
+        "reporting_currency": default_curr,
+        "trading_currency": default_curr,
+        "alignment_factor": 1.0,
+        "detected_gap": "NONE",
+        "audit_method": "None",
+        "warning_message": "Currency aligned or insufficient data to audit."
+    }
+
+    if not metrics:
+        return audit_report
+
+    # =========================================================
+    # 第一层：元数据标签审计 (Metadata Audit) - 针对 AkShare/港股最准
+    # =========================================================
+    raw_keys = metrics.get("raw_akshare", {})
+    if raw_keys:
+        # 1. 探测市值的币种
+        has_mcap_hkd = "总市值(港元)" in raw_keys or "港股市值(港元)" in raw_keys
+        
+        # 2. 探测财务指标的币种
+        # AkShare 惯例："(元)" 通常指人民币/公司本币，"(港元)" 指港币
+        has_eps_cny = "基本每股收益(元)" in raw_keys
+        has_bps_cny = "每股净资产(元)" in raw_keys
+        has_rev_cny = "营业总收入" in raw_keys # 通常不带单位，默认本币(CNY)
+
+        # 3. 判定逻辑：如果 市值是港币 AND (EPS是人民币 OR BPS是人民币)
+        if has_mcap_hkd and (has_eps_cny or has_bps_cny):
+            audit_report["is_misaligned"] = True
+            audit_report["detected_gap"] = "HKD_CNY_MISMATCH_BY_LABEL"
+            audit_report["reporting_currency"] = "CNY"
+            audit_report["trading_currency"] = "HKD"
+            audit_report["audit_method"] = "Metadata_Label_Check"
+            
+            # 给一个初始因子，后续数学审计可以微调它
+            audit_report["alignment_factor"] = 0.90 
+
+    # =========================================================
+    # 第二层：数学锚点审计 (Math Audit) - 计算精确因子
+    # =========================================================
+    market_cap = metrics.get('marketCap')
+    api_pe = metrics.get('trailingPE')
+    api_pb = metrics.get('priceToBook')
+    
+    # TTM 数据
+    ni_ttm = ttm_financials.get('net_income') if ttm_financials else None
+    equity = ttm_financials.get('total_equity') if ttm_financials else None
+
+    math_factor = None
+    math_method = "None"
+
+    # --- 路径 A: PE 对撞 (消除股价波动噪音) ---
+    if api_pe and ni_ttm and market_cap and api_pe > 0 and ni_ttm > 0:
+        raw_pe = market_cap / ni_ttm
+        if raw_pe > 0:
+            math_factor = api_pe / raw_pe
+            math_method = "PE_Collision via formulation: {api_pe / raw_pe}"
+
+    # --- 路径 B: PB 对撞 (备选) ---
+    elif api_pb and equity and market_cap and api_pb > 0 and equity > 0:
+        raw_pb = market_cap / equity
+        if raw_pb > 0:
+            math_factor = api_pb / raw_pb
+            math_method = "PB_Collision via formulation: {api_pb / raw_pb}"
+
+    # =========================================================
+    # 第三层：综合判定 (Synthesis)
+    # =========================================================
+    
+    if math_factor:
+        # 如果数学因子存在，我们用它来做最终判定
+        
+        # 1. 港股特殊修正：如果元数据已经判定错配，且数学因子在 0.85~1.05 之间
+        # 说明数学因子验证了 0.92 左右的汇率差
+        if audit_report["detected_gap"] == "HKD_CNY_MISMATCH_BY_LABEL":
+             # 信任数学因子的精确度 (比如算出来是 0.9322)
+             audit_report["alignment_factor"] = round(math_factor, 4)
+             audit_report["audit_method"] += f" + {math_method}"
+             audit_report["warning_message"] = (
+                f"CONFIRMED: Currency mismatch (Labels + Math). "
+                f"Financials in CNY, Market Cap in HKD. "
+                f"Adjustment Factor: {math_factor:.4f}."
+            )
+             if 0.9 <= math_factor <= 1.1:
+                 audit_report["warning_message"] = (
+                    f"DETECTED: Mixed Unit Calculation. Labels show HKD/CNY mismatch, "
+                    f"but Math Factor ({math_factor:.4f}) is ~1.0. This confirms the API uses "
+                    f"Mixed Units (HKD Price / CNY Earnings) without FX conversion. "
+                    f"Value is numerically consistent but implies an ~8% FX valuation bias."
+                 )
+             return audit_report
+
+        # 2. 常规逻辑 (YFinance / 无标签情况)
+        audit_report["alignment_factor"] = round(math_factor, 4)
+        audit_report["audit_method"] = math_method
+
+        if 6.0 <= math_factor <= 8.5:
+            audit_report["is_misaligned"] = True
+            audit_report["detected_gap"] = "USD_CNY_MISMATCH"
+            audit_report["reporting_currency"] = "CNY"
+            audit_report["trading_currency"] = "USD"
+            audit_report["warning_message"] = f"CRITICAL: USD/CNY Mismatch (Factor: {math_factor:.2f})."
+        
+        elif 0.8 <= math_factor <= 0.98:
+            # 只有当因子真的小于 0.98 时才报港股错配
+            audit_report["is_misaligned"] = True
+            audit_report["detected_gap"] = "HKD_CNY_MISMATCH"
+            audit_report["reporting_currency"] = "CNY"
+            audit_report["trading_currency"] = "HKD"
+            audit_report["warning_message"] = f"ALERT: HKD/CNY Mismatch (Factor: {math_factor:.2f})."
+        
+        elif math_factor > 20.0:
+            audit_report["is_misaligned"] = True
+            audit_report["detected_gap"] = "ADS_MISMATCH"
+            audit_report["warning_message"] = f"CRITICAL: ADS Ratio Mismatch (Factor: {math_factor:.2f})."
+        
+        else:
+            # 因子在 0.98 ~ 1.1 之间，认为是噪音，判定为对齐
+            audit_report["is_misaligned"] = False
+            audit_report["detected_gap"] = "ALIGNED"
+            audit_report["alignment_factor"] = 1.0 # 重置为 1.0 以免误修
+            audit_report["warning_message"] = "Data appears aligned."
+
+    # 如果没有数学因子，但元数据判定错配，直接返回元数据结论
+    elif audit_report["detected_gap"] != "NONE":
+        audit_report["warning_message"] = "WARNING: Mismatch detected by labels, but math validation unavailable (PE/PB missing)."
+
+    return audit_report
+
+# ==========================================
+# 2. TTM 计算工具函数 (模块级)
+# ==========================================
+def calc_ttm_stitch(
+    q_series: List[Dict], 
+    a_series: List[Dict], 
+    field_func: Callable, 
+    is_cumulative: bool
+) -> Optional[float]:
+    """
+    健壮的 TTM 计算 (支持任意年结日、支持离散/累积混合)
+    """
+    if not q_series:
+        return None
+
+    # 1. 获取当前报告期 (Latest Period)
+    cur_item = q_series[0]
+    cur_val = field_func(cur_item)
+    if cur_val is None:
+        return None
+
+    cur_date_raw = cur_item.get("period_ending")
+    if not cur_date_raw:
+        return None
+    cur_date = pd.to_datetime(cur_date_raw)
+
+    # =================================================
+    # 场景 A: 离散制 (Discrete) - 如美股 (yfinance)
+    # 逻辑: 严格寻找过去连续的4个季度 (Q, Q-1, Q-2, Q-3)
+    # =================================================
+    if not is_cumulative:
+        total_val = cur_val
+        found_quarters = 1
+        
+        # 遍历后续数据寻找前3个季度
+        # 要求: 日期必须大概相差 3, 6, 9 个月
+        expected_dates = [
+            cur_date - pd.DateOffset(months=3),
+            cur_date - pd.DateOffset(months=6),
+            cur_date - pd.DateOffset(months=9)
+        ]
+        
+        for exp_date in expected_dates:
+            # 在 q_series 里找最接近 exp_date 的报告 (容差15天)
+            match = find_closest_strictly(q_series[1:], exp_date, window=20)
+            if match:
+                v = field_func(match)
+                if v is not None:
+                    total_val += v
+                    found_quarters += 1
+        
+        # 必须凑齐4个季度才算 TTM，否则数据缺失
+        if found_quarters == 4:
+            return total_val
+        return None
+
+    # =================================================
+    # 场景 B: 累积制 (Cumulative) - 如A股/港股 (AkShare)
+    # 公式: TTM = Current_YTD + (Last_Annual - Last_Year_Same_Period_YTD)
+    # =================================================
+    
+    # 1. 寻找 "上一份年报" (Last Annual)
+    last_annual_item = None
+    for item in a_series:
+        d_raw = item.get("period_ending")
+        if not d_raw: continue
+        d = pd.to_datetime(d_raw)
+        if d < cur_date:
+            last_annual_item = item
+            break
+            
+    if not last_annual_item:
+        return None
+
+    last_annual_val = field_func(last_annual_item)
+    if last_annual_val is None:
+        return None
+
+    # 2. 寻找 "去年同期" (Last Year Same Period)
+    target_date = cur_date - pd.DateOffset(years=1)
+    pool = q_series + a_series
+    last_same_period_item = find_closest_strictly(pool, target_date, window=15)
+    
+    if not last_same_period_item:
+        if (cur_date - pd.to_datetime(last_annual_item["period_ending"])).days < 30:
+            return cur_val
+        return None
+
+    last_same_period_val = field_func(last_same_period_item)
+    if last_same_period_val is None:
+        return None
+
+    # 3. 执行 TTM 拼接公式
+    return cur_val + (last_annual_val - last_same_period_val)
+
+
+# ==========================================
+# 3. 计算引擎层 (切片拼接法 TTM + 严密年化)
 # ==========================================
 class FinancialCalculator:
     """负责跨市场通用指标计算，支持累积制 TTM 拼接"""
@@ -135,6 +339,9 @@ class FinancialCalculator:
         latest_ana=None,
         latest_annual_ana=None,
         is_cumulative=False,
+        ttm_values=None,
+        metrics=None,
+        currency_ctx=None,
     ) -> Dict[str, Any]:
         indicators = {}
 
@@ -170,78 +377,6 @@ class FinancialCalculator:
                         return round((cur_val - prev_val) / abs(prev_val), 4)
             return None
 
-        # 2. 累积制 TTM 拼接助手 (对齐用户提供的严密逻辑)
-        def _calc_ttm_stitch(
-            q_series: List[Dict], a_series: List[Dict], field_func: Callable
-        ) -> Optional[float]:
-            if not q_series:
-                return None
-
-            # 情况A: 非累积制 (US)，执行最近 4 季累加
-            if not is_cumulative:
-                if len(q_series) >= 4:
-                    total, count = 0.0, 0
-                    for i in range(4):
-                        v = field_func(q_series[i])
-                        if v is not None:
-                            total += v
-                            count += 1
-                    if count == 4:
-                        return total
-                return None
-
-            # 情况B: 累积制 (HK/A)，执行公式: TTM = Current_YTD + (Prior_FY - Prior_YTD)
-            cur_item = q_series[0]
-            cur_date_raw = cur_item.get("period_ending")
-            if cur_date_raw is None:
-                return None
-            cur_date = pd.to_datetime(cur_date_raw)
-
-            if not cur_date:
-                return None
-
-            # 如果是 12 月报，本身就是 TTM
-            cur_ytd_val = field_func(cur_item)
-            if cur_date.month == 12:
-                return cur_ytd_val
-
-            # 锁定去年同期
-            target_last_year, target_month = cur_date.year - 1, cur_date.month
-            last_fy_val, last_same_period_val = None, None
-
-            # 找 Prior FY (去年年报)
-            if a_series:
-                for a_item in a_series:
-                    a_d_raw = a_item.get("period_ending")
-                    if a_d_raw is None:
-                        continue
-                    a_date = pd.to_datetime(a_d_raw)
-                    if a_date and a_date.year == target_last_year:
-                        last_fy_val = field_func(a_item)
-                        break
-
-            # 找 Prior YTD (去年同期)
-            if len(q_series) > 1:
-                for q_item in q_series[1:]:
-                    q_d_raw = q_item.get("period_ending")
-                    if q_d_raw is None:
-                        continue
-                    q_date = pd.to_datetime(q_d_raw)
-                    if (
-                        q_date
-                        and q_date.year == target_last_year
-                        and q_date.month == target_month
-                    ):
-                        last_same_period_val = field_func(q_item)
-                        break
-
-            if (
-                cur_ytd_val is not None
-                and last_fy_val is not None
-                and last_same_period_val is not None
-            ):
-                return cur_ytd_val + (last_fy_val - last_same_period_val)
-            return None
 
         # --- A. 季度增长 ---
         if p_type == "quarterly":
@@ -299,7 +434,7 @@ class FinancialCalculator:
         )
         if roe_off is not None:
             val = float(roe_off) / 100
-            if not latest_ana.get("ROE_YEARLY") and is_cumulative and cur_date:
+            if latest_ana and not latest_ana.get("ROE_YEARLY") and is_cumulative and cur_date:
                 val = val * (12.0 / cur_date.month)
             indicators["roe_period_actual"] = round(val, 4)
         elif ni and eq and eq > 0:
@@ -320,7 +455,7 @@ class FinancialCalculator:
 
         # --- D. 杠杆与流动性 ---
         if eq and eq > 0 and liab is not None:
-            indicators["debt_to_equity_ratio"] = round(liab / eq, 4)
+            indicators["total_liabilities_to_equity"] = round(liab / eq, 4)
         cr_off = latest_ana.get("CURRENT_RATIO") if latest_ana else None
         if cr_off is not None:
             indicators["current_ratio_liquidity"] = round(float(cr_off), 4)
@@ -333,11 +468,38 @@ class FinancialCalculator:
             indicators["earnings_quality_period"] = round(ocf / ni, 4)
 
         # --- E. 实时估值 (TTM 平滑) ---
+        # 使用内部函数 _calculate_fcf_yield（严格遵循审计结果）
         if m_cap and m_cap > 0:
-            fcf_ttm = _calc_ttm_stitch(q_cash, a_cash, _get_fcf_raw)
-            if fcf_ttm is not None:
-                indicators["fcf_yield_realtime_ttm"] = round(fcf_ttm / m_cap, 4)
-
+            # 优先使用外部传入的 ttm_values
+            if ttm_values and metrics and currency_ctx:
+                # 内部函数：使用已转换的 m_cap
+                def _calculate_fcf_yield(ttm_fcf, ttm_ni, metrics, currency_ctx, m_cap):
+                    if ttm_fcf is None:
+                        return None
+                    method = currency_ctx.get("audit_method", "")
+                    
+                    # 路径 A: PE 降维
+                    if "PE_Collision" in method:
+                        api_pe = metrics.get('trailingPE') or metrics.get('pe_ratio')
+                        if api_pe and api_pe > 0 and ttm_ni and ttm_ni > 0:
+                            return (ttm_fcf / ttm_ni) / api_pe
+                    
+                    # 路径 B: 使用已转换的 m_cap
+                    if m_cap and m_cap > 0 :
+                        return (ttm_fcf / m_cap)
+                    
+                    return None
+                
+                fcf_yield = _calculate_fcf_yield(
+                    ttm_fcf=ttm_values.get("fcf"),
+                    ttm_ni=ttm_values.get("net_income"),
+                    metrics=metrics,
+                    currency_ctx=currency_ctx,
+                    m_cap=m_cap
+                )
+                if fcf_yield is not None:
+                    indicators["fcf_yield_realtime_ttm"] = round(fcf_yield, 4)
+                    
         return indicators
 
 
@@ -359,7 +521,6 @@ class YFinanceFetcher(BaseFetcher):
         self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
     ) -> Dict[str, List[Dict]]:
         all_task_names = [
-            "metrics",
             "profile",
             "estimates",
             "share_stats",
@@ -374,9 +535,7 @@ class YFinanceFetcher(BaseFetcher):
 
         async def fetch_item(name: str):
             p: Dict[str, Any] = {}
-            if name == "metrics":
-                func, p = obb_any.equity.fundamental.metrics, {}
-            elif name == "profile":
+            if name == "profile":
                 func, p = obb_any.equity.profile, {}
             elif name == "estimates":
                 func, p = obb_any.equity.estimates.consensus, {}
@@ -392,9 +551,20 @@ class YFinanceFetcher(BaseFetcher):
                     getattr(obb_any.equity.fundamental, stmt),
                     {"period": period, "limit": limit},
                 )
+            
+            # 调试信息
+            print(f"  [YFinanceFetcher] Fetching {name} for {symbol} with provider={self.provider}...")
+            
             res = await self.parent._fetch_with_fallback(
-                symbol, func, [self.provider, "fmp"], is_series=True, **p
+                symbol, func, providers=[self.provider], is_series=True, **p
             )
+            
+            # 调试信息
+            if res:
+                print(f"  [YFinanceFetcher] {name}: Got {len(res)} records")
+            else:
+                print(f"  [YFinanceFetcher] {name}: No data returned")
+            
             return name, res or []
 
         all_res = await asyncio.gather(*[fetch_item(tn) for tn in target_tasks])
@@ -404,12 +574,6 @@ class YFinanceFetcher(BaseFetcher):
                 if name not in result:
                     result[name] = []
         return result
-        for name in all_task_names:
-            if name not in result:
-                result[name] = []
-
-        return result
-
 
 class AkShareFetcher(BaseFetcher):
     def __init__(self, parent):
@@ -435,7 +599,7 @@ class AkShareFetcher(BaseFetcher):
                         index="REPORT_DATE",
                         columns="STD_ITEM_NAME",
                         values="AMOUNT",
-                        aggfunc="first",
+                        aggfunc="first",  # type: ignore[arg-type]
                     )
                     .sort_index(ascending=False)
                     .head(lim)
@@ -474,28 +638,10 @@ class AkShareFetcher(BaseFetcher):
             fetch_ana("报告期", limit_q),
         )
 
-        metrics, profile, shares = [], [], None
+        # metrics 已移至 market_data.py 获取，此处不再重复获取
+        profile, shares = [], None
         try:
-            m_df = await asyncio.to_thread(
-                ak.stock_hk_financial_indicator_em, symbol=code
-            )
-            if not m_df.empty:
-                r = {str(k).strip(): v for k, v in m_df.iloc[0].to_dict().items()}
-                shares = r.get("已发行股本(股)")
-                dy_raw = r.get("股息率TTM(%)")
-                metrics = [
-                    {
-                        "marketCap": r.get("总市值(港元)"),
-                        "trailingPE": r.get("市盈率"),
-                        "priceToBook": r.get("市净率"),
-                        "dividendYield": (
-                            float(dy_raw) / 100 if dy_raw is not None else None
-                        ),
-                        "trailingEps": r.get("基本每股收益(元)"),
-                        "bookValue": r.get("每股净资产(元)"),
-                        "currency": "HKD",
-                    }
-                ]
+            # 这里原本获取 metrics 的逻辑已移除，保留 profile 和 shares 获取
             p_df, c_df = (
                 await asyncio.to_thread(ak.stock_hk_security_profile_em, symbol=code),
                 await asyncio.to_thread(ak.stock_hk_company_profile_em, symbol=code),
@@ -510,26 +656,24 @@ class AkShareFetcher(BaseFetcher):
                 if not c_df.empty
                 else {}
             )
-            profile = [
-                {
-                    "name": pr.get("证券简称") or cr.get("公司名称"),
-                    "listingDate": pr.get("上市日期"),
-                    "industry": pr.get("板块") or cr.get("所属行业"),
-                    "fiscalYearEnd": pr.get("年结日") or "12-31",
-                    "website": cr.get("公司网址"),
-                    "address1": cr.get("办公地址"),
-                    "fullTimeEmployees": cr.get("员工人数"),
-                    "longBusinessSummary": cr.get("公司介绍"),
-                }
-            ]
-        except:
-            pass
+            # 直接附着原始数据
+            profile = [{}]
+            if pr:
+                profile[0]["security_profile"] = pr
+                if pr.get("证券简称"):
+                    profile[0]["name"] = pr.get("证券简称")
+            if cr:
+                profile[0]["company_profile"] = cr
+                if not profile[0].get("name") and cr.get("公司名称"):
+                    profile[0]["name"] = cr.get("公司名称")
+            
+        except Exception as e:
+            print(f"  [Fundamental] Warning: Failed to fetch profile for {symbol}: {e}")
 
         return {
-            "metrics": metrics,
             "profile": profile,
             "estimates": [],
-            "share_stats": [{"sharesOutstanding": shares, "floatShares": None}],
+            "share_stats": [],
             "a_income": res[0],
             "q_income": res[1],
             "a_balance": res[2],
@@ -575,8 +719,9 @@ class FundamentalCollector(BaseCollector):
                     f"  [Fundamental] Warning: Failed to extract price from market_data: {e}"
                 )
 
-        is_cum = any(symbol.upper().endswith(s) for s in [".HK", ".SH", ".SZ", ".SS"])
-        is_hk = symbol.upper().endswith(".HK")
+        market_type = get_market_type(symbol)
+        is_cum = market_type in (MarketType.HK, MarketType.CN)
+        is_hk = market_type == MarketType.HK
 
         if is_hk:
             # 🟢 港股混合编排模式：并行执行
@@ -619,7 +764,7 @@ class FundamentalCollector(BaseCollector):
 
         if pack.fundamentals is None:
             pack.fundamentals = {}
-        for b in ["metrics", "profile", "estimates", "share_stats"]:
+        for b in ["profile", "estimates", "share_stats"]:
             pack.fundamentals[b] = db[b][0] if db.get(b) else None
 
         q_inc, a_inc = db.get("q_income", []), db.get("a_income", [])
@@ -627,6 +772,8 @@ class FundamentalCollector(BaseCollector):
         q_suffix = "_ytd" if is_cum else "_discrete"
 
         if latest_is:
+            # 初始化 anchor_date 为 None，确保后续使用不会报 possibly unbound
+            anchor_date: Optional[pd.Timestamp] = None
             latest_d_raw = latest_is.get("period_ending")
             if latest_d_raw:
                 anchor_date = pd.to_datetime(latest_d_raw)
@@ -636,8 +783,8 @@ class FundamentalCollector(BaseCollector):
                 db.get("q_cash", []) + db.get("a_cash", []),
             )
             cur_bs, cur_cf = (
-                self._find_closest_strictly(all_bs, anchor_date),
-                self._find_closest_strictly(all_cf, anchor_date),
+                find_closest_strictly(all_bs, anchor_date),
+                find_closest_strictly(all_cf, anchor_date),
             )
 
             stmt_suffix = "_annual" if p_type == "annual" else f"_quarterly{q_suffix}"
@@ -653,44 +800,76 @@ class FundamentalCollector(BaseCollector):
             analysis_pool = db.get(
                 "q_analysis" if p_type == "quarterly" else "a_analysis", []
             )
-            latest_ana = self._find_closest_strictly(analysis_pool, anchor_date)
+            latest_ana = find_closest_strictly(analysis_pool, anchor_date)
             if latest_ana:
                 print(
                     f"  [Alignment] Matched analysis indicators for date: {latest_ana.get('period_ending')}"
                 )
             else:
+                anchor_date_str = anchor_date.strftime('%Y-%m-%d') if anchor_date else "N/A"
                 print(
-                    f"  [Alignment] Warning: No matching indicators found for {anchor_date.strftime('%Y-%m-%d')}"
+                    f"  [Alignment] Warning: No matching indicators found for {anchor_date_str}"
                 )
-            mcap_input = _get_num(pack.fundamentals.get("metrics"), "MCAP")
-            if mcap_input is None and latest_price is not None:
-                # 尝试用 (Price * Shares) 估算 MCAP
-                shares = _get_num(pack.fundamentals.get("share_stats"), "SHARES")
-                if shares and shares > 0:
-                    mcap_input = latest_price * shares
-                    print(
-                        f"  [Fundamental] Estimated MCAP using Price ({latest_price}) * Shares ({shares})"
-                    )
-            if is_cum and symbol.upper().endswith(".HK") and mcap_input is not None:
-                # 执行港股汇率对齐 (HKD -> RMB)
-                fx_rate = await self._get_realtime_fx_rate()
+            # 从 market_metrics 获取 MCAP（由 market_data.py 提供）
+            mcap_input = _get_num(pack.market_metrics, "MCAP")
+            
+            # ===== 币种错配审计 =====
+            # 步骤 1: 计算 TTM 财务数据
+            ttm_ni = calc_ttm_stitch(
+                q_inc, a_inc,
+                lambda x: _get_num(x, "NI"),
+                is_cum
+            )
+            ttm_rev = calc_ttm_stitch(
+                q_inc, a_inc,
+                lambda x: _get_num(x, "REV"),
+                is_cum
+            )
+            ttm_fcf = calc_ttm_stitch(
+                db.get("q_cash", []), db.get("a_cash", []),
+                _get_fcf_raw,
+                is_cum
+            )
+            equity = _get_num(cur_bs, "EQUITY") if cur_bs else None
+            
+            ttm_values = {
+                "net_income": ttm_ni,
+                "revenue": ttm_rev,
+                "fcf": ttm_fcf,
+                "total_equity": equity
+            }
+            
+            # 步骤 2: 根据市场类型获取汇率
+            fx_rate = None
+            if market_type == MarketType.HK:
+                fx_rate = await get_fx_rate("HKD", "CNY")
+            elif market_type == MarketType.US:
+                fx_rate = await get_fx_rate("USD", "CNY")
+            
+            # 步骤 3: 调用 audit_currency_context (传入 ttm_values 作为 ttm_financials)
+            currency_ctx = audit_currency_context(pack.market_metrics or {}, ttm_values, market_type)
+            pack.fundamentals["currency_context"] = currency_ctx
+            print(f"  [Currency] Audit: {currency_ctx.get('detected_gap')}, Factor: {currency_ctx.get('alignment_factor')}")
+            
+            # 步骤 4: 根据审计结果决定是否转换
+            if currency_ctx.get("is_misaligned") and fx_rate is not None and mcap_input is not None:
                 mcap_rmb = mcap_input * fx_rate
                 print(
-                    f"  [Currency] Real-time Aligned Market Cap to RMB: {mcap_input:,.0f} HKD -> {mcap_rmb:,.0f} RMB (Rate: {fx_rate:.4f})"
+                    f"  [Currency] Aligned Market Cap: {mcap_input:,.0f} -> {mcap_rmb:,.0f} (Rate: {fx_rate:.4f})"
                 )
                 mcap_input = mcap_rmb
-                metrics_obj = pack.fundamentals.get("metrics")
-                if isinstance(metrics_obj, dict):
-                    pack.fundamentals["metrics"]["market_cap_rmb"] = mcap_input
-                    pack.fundamentals["metrics"]["fx_rate"] = fx_rate
+                # 更新 market_metrics 中的对齐后市值
+                if pack.market_metrics:
+                    pack.market_metrics["market_cap_rmb"] = mcap_input
+                    pack.market_metrics["fx_rate"] = fx_rate
 
             q_ana_pool = db.get("q_analysis", [])
             a_ana_pool = db.get("a_analysis", [])
             # 当前周期指标：动态根据 p_type 选池，并与 anchor_date 严格对齐
             current_ana_pool = q_ana_pool if p_type == "quarterly" else a_ana_pool
-            latest_ana = self._find_closest_strictly(current_ana_pool, anchor_date)
+            latest_ana = find_closest_strictly(current_ana_pool, anchor_date)
             # 年度对比指标：固定从 a_ana_pool 选，并与 anchor_date 对齐
-            latest_annual_ana = self._find_closest_strictly(a_ana_pool, anchor_date)
+            latest_annual_ana = find_closest_strictly(a_ana_pool, anchor_date)
             if latest_ana:
                 print(
                     f"  [Alignment] Matched indicators for: {latest_ana.get('period_ending')}"
@@ -709,6 +888,9 @@ class FundamentalCollector(BaseCollector):
                 latest_ana,
                 latest_annual_ana,
                 is_cumulative=is_cum,
+                ttm_values=ttm_values,
+                metrics=pack.market_metrics or {},
+                currency_ctx=currency_ctx,
             )
             indicators.update(
                 {
@@ -742,25 +924,13 @@ class FundamentalCollector(BaseCollector):
         )
         return ComponentOutput(success=True, payload=pack)
 
-    def _find_closest_strictly(
-        self, series: List[Dict], anchor_date: Optional[datetime], window: int = 15
-    ) -> Optional[Dict]:
-        if not series or not anchor_date:
-            return None
-        v = []
-        for it in series:
-            d_raw = it.get("period_ending")
-            if d_raw:
-                d = pd.to_datetime(d_raw)
-            if d:
-                diff = abs((d - anchor_date).days)
-                if diff <= window:
-                    v.append((diff, it))
-        return sorted(v, key=lambda x: x[0])[0][1] if v else None
-
     async def _fetch_with_fallback(
-        self, symbol: str, func: Callable, providers: List[str], **kwargs
+        self, symbol: str, func: Callable, 
+        providers: Optional[List[str]] = None,  # 新增：允许传入 providers 列表
+        **kwargs
     ) -> Any:
+        if providers is None:
+            providers = [self.provider]  # 默认只用配置的 provider
         for provider in providers:
             success, result = await self._execute_obb_call(
                 symbol, provider, func, **kwargs
@@ -789,21 +959,8 @@ class FundamentalCollector(BaseCollector):
                     for it in res.results
                 ]
             return True, res.to_df() if hasattr(res, "to_df") else res
+        except Exception as e:
+            print(f"  [YFinanceFetcher] Error calling {func.__name__} with provider={provider}: {e}")
+            return False, None
         except:
             return False, None
-
-    async def _get_realtime_fx_rate(self) -> float:
-        """从 AkShare (百度源) 获取实时 HKD/CNY 汇率"""
-        try:
-            # 百度源实时行情
-            df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
-            subset = df[df["名称"].str.contains("港元", na=False)]
-            if not subset.empty:
-                # 接口返回的是 CNY/HKD (1人民币兑多少港元)
-                cny_to_hkd = float(subset.iloc[0]["最新价"])
-                if cny_to_hkd > 0:
-                    return 1.0 / cny_to_hkd
-            return 0.90  # 如果没找到，返回合理默认值
-        except Exception as e:
-            print(f"  [Fundamental] FX fetch failed: {e}")
-            return 0.90  # Fallback
