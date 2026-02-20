@@ -122,9 +122,11 @@ class ResearchPack(BaseModel):
     )
 
     # 结构化数据
-    market_data: Optional[DataFrameModel] = None
-    technicals: Optional[DataFrameModel] = None
-    fundamentals: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})
+    market_data: Optional[DataFrameModel] = None  # OHLCV 时间序列
+    market_metrics: Optional[Dict[str, Any]] = None  # 市场快照指标：市值、PE、PB、PS、EPS等
+    market_data_meta: Optional[Dict[str, Any]] = None  # 市场数据元信息：provider、columns等
+    technicals: Optional[DataFrameModel] = None  # 技术指标时间序列
+    fundamentals: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})  # 财务数据
 
     # 非结构化/文本数据
     news: List[Dict[str, Any]] = Field(default_factory=list)

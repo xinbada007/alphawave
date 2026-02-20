@@ -1,23 +1,52 @@
-# AlphaFlow Core Dependencies
-pandas>=2.0.0
-pydantic>=2.0.0
-requests>=2.31.0
-urllib3>=2.0.0
-httpx>=0.24.0
+# ==========================================
+# AlphaFlow 终极黄金环境清单 (Python 3.10+)
+# ==========================================
 
-# OpenBB Platform v4 (Core & Key Extensions)
-openbb>=4.1.0
-openbb-yfinance>=1.0.0
-openbb-equity>=1.0.0
-openbb-technical>=1.0.0
+# --- 核心数据处理 ---
+pandas==2.3.3
+numpy==2.2.6
+pydantic==2.12.5
+pydantic_core==2.41.5
 
-# Visualization & Networking Support
-# PySocks is mandatory for SOCKS5 proxy support in requests
-PySocks>=1.7.1
+# --- 金融数据源 (核心修复) ---
+# yfinance 0.2.66 解决了 429 问题，配合 OpenBB 4.6.0 完美运行
+yfinance==0.2.66
+akshare==1.18.25
 
-# Utilities
-tabulate>=0.9.0
-aiohttp>=3.8.0
-python-dotenv>=1.0.0
+# --- OpenBB 平台核心及其扩展 ---
+openbb==4.6.0
+openbb-core==1.5.9
+openbb-yfinance==1.5.2
+openbb-equity==1.5.1
+openbb-technical==1.5.1
+openbb-sec==1.5.1
+openbb-news==1.5.1
 
-akshare
+# --- 严格依赖对齐 (解决死锁的关键) ---
+# 必须锁定这些版本，否则 OpenBB 会报兼容性错误
+fastapi==0.128.0
+uvicorn==0.40.0
+python-multipart==0.0.20
+websockets==15.0
+ruff==0.13.2
+
+# --- 缓存与网络 (解决 429 的幕后功臣) ---
+# requests-cache 1.2.1 与 url-normalize 1.4.3 是兼容异步/同步缓存的唯一解
+requests==2.32.5
+requests-cache==1.2.1
+aiohttp-client-cache==0.11.0
+url-normalize==1.4.3
+PySocks==1.7.1
+urllib3==2.6.3
+httpx==0.28.1
+
+# --- XML 与数据解析 ---
+# 必须低于 6.0.0 以满足 openbb-sec 要求
+lxml==5.4.0
+xmltodict==0.13.0
+beautifulsoup4==4.14.3
+
+# --- 辅助工具 ---
+python-dotenv==1.2.1
+tabulate==0.9.0
+aiohttp==3.13.3

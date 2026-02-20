@@ -14,11 +14,185 @@ from alphaflow.core.schema import (
     DataFrameModel,
 )
 from alphaflow.utils.api_rotator import get_api_key
+from alphaflow.core.data_utils import (
+    MARKET_FIELD_CHAINS, 
+    FINANCIAL_FIELD_CHAINS, 
+    get_field_value, 
+    get_market_type, 
+    MarketType
+)
 
 # ==========================================
 # 1. Fetcher 策略接口与实现
 # ==========================================
 obb_any: Any = obb
+
+
+# ==========================================
+# 1.1 市场指标抓取器 (新增)
+# ==========================================
+
+class MetricsFetcher:
+    """
+    市场指标抓取器 - 从 metrics 接口获取实时估值指标
+    职责单一：只从 metrics 获取，有就有，没有就没有
+    """
+
+    # 字段名映射：alias -> 标准字段名
+    FIELD_ALIAS_MAP = {
+        # Market 字段
+        "MCAP": "marketCap",
+        "MCAP_HK": "marketCapHk",
+        "PE": "trailingPE",
+        "PB": "priceToBook",
+        "PS": "priceToSales",
+        "PCF": "priceToCashFlow",
+        "DIVIDEND_YIELD": "dividendYieldTtm",  # 注意：AkShare 返回的是股息率
+        "EPS": "trailingEps",
+        "BPS": "bookValue",
+        "OCPS": "operatingCashFlowPerShare",
+        "DPS": "dividendPerShare",
+        "SHARES": "sharesOutstanding",
+        "SHARES_H": "sharesH",
+        "AUTHORIZED_SHARES": "authorizedShares",
+        "LOT_SIZE": "lotSize",
+        "PAYOUT_RATIO": "payoutRatio",
+        # Financial 字段 - 绝对数值
+        "REV": "totalRevenue",
+        "NI": "netProfit",
+        "OI": "operatingIncome",
+        "GP": "grossProfit",
+        "OCF": "operatingCashFlow",
+        "ASSETS": "totalAssets",
+        "LIAB": "totalLiabilities",
+        "EQUITY": "totalEquity",
+        # Financial 字段 - 百分比（需要归一化）
+        "ROE": "roe",
+        "ROA": "roa",
+        "NET_MARGIN": "netMargin",
+        "GROSS_MARGIN": "grossMargin",
+        # Financial 字段 - 增长率（需要归一化）
+        "REV_GROWTH_QOQ": "revGrowthQoq",
+        "NI_GROWTH_QOQ": "niGrowthQoq",
+        "REV_GROWTH_YOY": "revGrowthYoy",
+        "NI_GROWTH_YOY": "niGrowthYoy",
+    }
+
+    # 需要归一化的百分比字段（AkShare 返回百分比，需要除以 100）
+    PCT_FIELDS = {
+        "roe", "roa", "netMargin", "grossMargin", 
+        "payoutRatio", "dividendYieldTtm",
+        "revGrowthQoq", "niGrowthQoq", "revGrowthYoy", "niGrowthYoy"
+    }
+
+    @staticmethod
+    def _extract_metrics(data: Dict[str, Any], provider: str) -> Dict[str, Any]:
+        """
+        从原始数据中提取字段，统一格式
+        
+        Args:
+            data: 原始数据字典
+            provider: 数据提供者 ("akshare" 或 "openbb")
+        
+        Returns:
+            标准化后的指标字典
+        """
+        metrics = {}
+        
+        # 1. 提取 Market 字段
+        for alias_key in MARKET_FIELD_CHAINS.keys():
+            val = get_field_value(data, alias_key, MARKET_FIELD_CHAINS)
+            if val is not None:
+                key = MetricsFetcher.FIELD_ALIAS_MAP.get(alias_key, alias_key.lower())
+                # AkShare 需要归一化，OpenBB 直接返回
+                if provider == "akshare" and key in MetricsFetcher.PCT_FIELDS:
+                    metrics[key] = round(val / 100, 6)
+                else:
+                    metrics[key] = val
+        
+        # 2. 提取 Financial 字段
+        for alias_key in FINANCIAL_FIELD_CHAINS.keys():
+            val = get_field_value(data, alias_key, FINANCIAL_FIELD_CHAINS)
+            if val is not None:
+                key = MetricsFetcher.FIELD_ALIAS_MAP.get(alias_key, alias_key.lower())
+                # AkShare 需要归一化，OpenBB 直接返回
+                if provider == "akshare" and key in MetricsFetcher.PCT_FIELDS:
+                    metrics[key] = round(val / 100, 6)
+                else:
+                    metrics[key] = val
+        
+        # 3. yfinance 特殊处理：部分字段返回百分比形式，需要除以 100
+        # 同时修改原始数据 (data)，确保 raw_openbb 也被归一化
+        print(f"  [MetricsFetcher] provider: {provider}, keys in metrics: {list(metrics.keys())}")
+        if provider == "yfinance":
+            # dividend_yield 是百分比形式
+            if "dividendYieldTtm" in metrics and metrics["dividendYieldTtm"] is not None:
+                metrics["dividendYieldTtm"] = round(metrics["dividendYieldTtm"] / 100, 6)
+                # 同步修改原始数据
+            if "dividend_yield" in data and data["dividend_yield"] is not None:
+                data["dividend_yield"] = round(data["dividend_yield"] / 100, 6)
+            # debt_to_equity 是百分比形式
+            if "debtToEquity" in metrics and metrics["debtToEquity"] is not None:
+                metrics["debtToEquity"] = round(metrics["debtToEquity"] / 100, 6)
+                # 同步修改原始数据
+            if "debt_to_equity" in data and data["debt_to_equity"] is not None:
+                data["debt_to_equity"] = round(data["debt_to_equity"] / 100, 6)
+        
+        return metrics
+
+    @staticmethod
+    async def fetch_from_akshare(symbol: str) -> Dict[str, Any]:
+        """从 AkShare 获取市场指标"""
+        try:
+            code = symbol.split(".")[0].zfill(5)
+            m_df = await asyncio.to_thread(
+                ak.stock_hk_financial_indicator_em, 
+                symbol=code
+            )
+            
+            if m_df.empty:
+                return {}
+            
+            r = {str(k).strip(): v for k, v in m_df.iloc[0].to_dict().items()}
+            
+            # 使用共享方法提取字段
+            metrics = MetricsFetcher._extract_metrics(r, "akshare")
+            
+            # 保留原始数据
+            metrics["raw_akshare"] = r
+            metrics["_source"] = "akshare"
+            return metrics
+            
+        except Exception as e:
+            print(f"  [MetricsFetcher/AkShare] Error: {e}")
+            return {}
+
+    @staticmethod
+    async def fetch_from_openbb(symbol: str, provider: str = "yfinance") -> Dict[str, Any]:
+        """从 OpenBB 获取市场指标"""
+        try:
+            res = await asyncio.to_thread(
+                obb_any.equity.fundamental.metrics,
+                symbol=symbol, 
+                provider=provider,
+            )
+            
+            if not res or not res.results:
+                return {}
+            
+            data = res.results[0].dict() if hasattr(res.results[0], 'dict') else vars(res.results[0])
+            
+            # 使用共享方法提取字段
+            metrics = MetricsFetcher._extract_metrics(data, provider)
+            
+            # 保留原始数据
+            metrics["raw_openbb"] = data
+            metrics["_source"] = provider
+            return metrics
+            
+        except Exception as e:
+            print(f"  [MetricsFetcher/OpenBB] Error: {e}")
+            return {}
 
 
 class PriceFetcher:
@@ -94,7 +268,9 @@ class AkSharePriceFetcher(PriceFetcher):
             # 典型价格
             df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
             # VWAP (成交额/成交量)，如果 AkShare 没给 vwap 字段，自己算
-            if "amount" in df.columns and "volume" in df.columns:
+            if "vwap" not in df.columns:
+                df["vwap"] = None
+            elif "amount" in df.columns and "volume" in df.columns:
                 df["vwap"] = (df["amount"] / df["volume"]).fillna(df["close"])
 
             # 填充 OpenBB 兼容字段 (AkShare 日线通常不含除权除息日的具体分红数值，设为默认)
@@ -175,8 +351,11 @@ class OpenBBPriceFetcher(PriceFetcher):
 
             # 计算衍生指标
             df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
-            if "vwap" not in df.columns or df["vwap"].isnull().all():
-                df["vwap"] = (df.get("amount", 0) / df["volume"]).fillna(df["close"])
+            # VWAP：有就有，没有就没有，不能用 0 计算
+            if "vwap" not in df.columns:
+                df["vwap"] = None
+            elif "amount" in df.columns and "volume" in df.columns:
+                df["vwap"] = (df["amount"] / df["volume"]).fillna(df["close"])
 
             # 格式化日期
             df.index = pd.to_datetime(df.index).strftime("%Y-%m-%d")
@@ -218,8 +397,9 @@ class MarketDataCollector(BaseCollector):
         target_days = context.metadata.get("days", 250)
 
         # 2. 路由策略定义
+        market_type = get_market_type(symbol)
         fetchers: List[PriceFetcher] = []
-        if symbol.upper().endswith(".HK"):
+        if market_type == MarketType.HK:
             # 港股：首选 AkShare
             fetchers = [AkSharePriceFetcher(), OpenBBPriceFetcher("yfinance")]
         else:
@@ -247,9 +427,17 @@ class MarketDataCollector(BaseCollector):
             final_df = price_df.tail(target_days)
             pack.market_data = DataFrameModel.from_df(final_df)
 
-            # 记录元数据供下游参考
-            pack.extra["price_source"] = used_provider
-            pack.extra["columns"] = final_df.columns.tolist()
+            # 5. 获取市场指标
+            market_metrics = await self._fetch_metrics(symbol)
+            if market_metrics:
+                pack.market_metrics = market_metrics
+                print(f"  [MarketData] Metrics: {list(market_metrics.keys())}")
+
+            # 记录元数据到 market_data_meta
+            pack.market_data_meta = {
+                "price_source": used_provider,
+                "columns": final_df.columns.tolist()
+            }
 
             # 打印摘要
             extra_cols = [
@@ -268,3 +456,22 @@ class MarketDataCollector(BaseCollector):
             error=f"Failed to fetch market data for {symbol} from all providers",
             payload=pack,
         )
+
+    async def _fetch_metrics(self, symbol: str) -> Dict[str, Any]:
+        """获取市场指标（多 Provider Fallback）"""
+        market_type = get_market_type(symbol)
+        
+        if market_type == MarketType.HK:
+            # 港股：用 AkShare
+            metrics = await MetricsFetcher.fetch_from_akshare(symbol)
+            if metrics:
+                return metrics
+            # Fallback: 尝试 OpenBB
+            return await MetricsFetcher.fetch_from_openbb(symbol, "yfinance")
+        else:
+            # 美股：用 OpenBB
+            metrics = await MetricsFetcher.fetch_from_openbb(symbol, self.default_provider)
+            if metrics:
+                return metrics
+            # Fallback: 尝试 yfinance
+            return await MetricsFetcher.fetch_from_openbb(symbol, "yfinance")
