@@ -225,6 +225,10 @@ class AkSharePriceFetcher(PriceFetcher):
 
             if df.empty:
                 return pd.DataFrame()
+            
+             # 如果存在“日期”列，先去重，保留最后一条（通常是最新的）
+            if "日期" in df.columns:
+                df = df.drop_duplicates(subset=["日期"], keep='last')
 
             # --- 深度榨干：全量字段标准化映射 ---
             # 将中文业务字段映射为英文，方便下游 Processor (如 Technicals) 使用
@@ -246,6 +250,8 @@ class AkSharePriceFetcher(PriceFetcher):
             # --- 数据清洗与类型强制 ---
             df["date"] = pd.to_datetime(df["date"])
             df.set_index("date", inplace=True)
+            # 修正建议：强制排序，防止 API 返回乱序数据
+            df.sort_index(ascending=True, inplace=True) 
 
             # 确保核心列存在且为数值
             numeric_cols = [
@@ -268,17 +274,15 @@ class AkSharePriceFetcher(PriceFetcher):
             # 典型价格
             df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
             # VWAP (成交额/成交量)，如果 AkShare 没给 vwap 字段，自己算
-            if "vwap" not in df.columns:
-                df["vwap"] = None
-            elif "amount" in df.columns and "volume" in df.columns:
+            if "vwap" not in df.columns and "amount" in df.columns and "volume" in df.columns:
                 df["vwap"] = (df["amount"] / df["volume"]).fillna(df["close"])
 
-            # 填充 OpenBB 兼容字段 (AkShare 日线通常不含除权除息日的具体分红数值，设为默认)
-            df["dividend"] = 0.0
-            df["split_ratio"] = 1.0
+            # 注意：dividend 和 split_ratio 已从 market_data 移除
+            # 如需获取分红历史，请使用 FundamentalCollector 的独立接口
 
             # 统一索引格式
-            df.index = pd.to_datetime(df.index).strftime("%Y-%m-%d")
+            df.index = pd.to_datetime(df.index).tz_localize(None)
+            df.index.name = "date"
             return df
         except Exception as e:
             print(f"  [AkShareFetcher] Error: {e}")
@@ -326,29 +330,6 @@ class OpenBBPriceFetcher(PriceFetcher):
                 df["date"] = pd.to_datetime(df["date"])
                 df.set_index("date", inplace=True)
 
-            # --- 深度榨干：保留 Provider 的原始增强字段 ---
-            # 不要盲目 fillna(0)，先检查列是否存在
-            # yfinance 通常返回 'dividends', 'stock_splits'
-            if "dividends" in df.columns:
-                df.rename(columns={"dividends": "dividend"}, inplace=True)
-            if "stock_splits" in df.columns:
-                df.rename(columns={"stock_splits": "split_ratio"}, inplace=True)
-
-            # 仅当列完全缺失时，才进行初始化
-            if "dividend" not in df.columns:
-                df["dividend"] = 0.0
-            else:
-                df["dividend"] = pd.to_numeric(df["dividend"], errors="coerce").fillna(
-                    0.0
-                )
-
-            if "split_ratio" not in df.columns:
-                df["split_ratio"] = 1.0
-            else:
-                df["split_ratio"] = df["split_ratio"] = pd.to_numeric(
-                    df["split_ratio"], errors="coerce"
-                ).fillna(1.0)
-
             # 计算衍生指标
             df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
             # VWAP：有就有，没有就没有，不能用 0 计算
@@ -356,9 +337,16 @@ class OpenBBPriceFetcher(PriceFetcher):
                 df["vwap"] = None
             elif "amount" in df.columns and "volume" in df.columns:
                 df["vwap"] = (df["amount"] / df["volume"]).fillna(df["close"])
+            
+            # 移除无关字段（分红和拆股应该由 FundamentalCollector 独立处理）
+            cols_to_remove = ["dividends", "stock_splits", "dividend", "split_ratio"]
+            for col in cols_to_remove:
+                if col in df.columns:
+                    df = df.drop(columns=[col])
 
             # 格式化日期
-            df.index = pd.to_datetime(df.index).strftime("%Y-%m-%d")
+            df.index = pd.to_datetime(df.index).tz_localize(None)
+            df.index.name = "date"
             return df
         except Exception as e:
             print(f"  [OpenBBFetcher] ({self.provider}) Error: {e}")
@@ -424,7 +412,11 @@ class MarketDataCollector(BaseCollector):
         # 4. 封装输出
         if not price_df.empty:
             # 截取目标长度 (Tail)
+            price_df = price_df.sort_index(ascending=True)
             final_df = price_df.tail(target_days)
+            # 按日期倒序排列（最新在前），与其他数据保持一致
+            final_df = final_df.sort_index(ascending=False)        
+                
             pack.market_data = DataFrameModel.from_df(final_df)
 
             # 5. 获取市场指标

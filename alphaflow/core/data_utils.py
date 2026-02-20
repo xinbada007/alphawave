@@ -206,11 +206,34 @@ MARKET_FIELD_CHAINS: Dict[str, List[str]] = {
 
 
 # ==========================================
-# 4. 合并的完整 FIELD_CHAINS (向后兼容)
+# 4. 分红/拆股字段映射 (Dividend & Splits Fields)
+# ==========================================
+DIVIDEND_FIELD_CHAINS: Dict[str, List[str]] = {
+    # 港股分红字段 (AkShare - stock_hk_dividend_payout_em)
+    "EX_DIVIDEND_DATE": ["除净日", "ex_dividend_date"],
+    "DIVIDEND_PLAN": ["分红方案", "dividend_plan"],
+    "ANNOUNCE_DATE": ["最新公告日期", "announce_date"],
+    "PAYMENT_DATE": ["发放日", "payment_date"],
+    "FISCAL_YEAR": ["财政年度", "fiscal_year"],
+    "RECORD_DATE": ["截至过户日", "record_date"],
+    "DIVIDEND_TYPE": ["分配类型", "dividend_type"],
+    
+    # 港股拆股字段 (如有)
+    "SPLIT_DATE": ["拆股日期", "split_date"],
+    "SPLIT_RATIO": ["拆股比例", "split_ratio", "ratio"],
+    
+    # 美股分红字段 (OpenBB)
+    "DIVIDEND_AMOUNT": ["amount", "dividend_amount"],
+    "EX_DATE": ["ex_dividend_date", "ex_date"],
+}
+
+# ==========================================
+# 5. 合并的完整 FIELD_CHAINS (向后兼容)
 # ==========================================
 FIELD_CHAINS: Dict[str, List[str]] = {
     **FINANCIAL_FIELD_CHAINS,
     **MARKET_FIELD_CHAINS,
+    **DIVIDEND_FIELD_CHAINS,
 }
 
 

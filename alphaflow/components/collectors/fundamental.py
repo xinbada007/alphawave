@@ -1,10 +1,12 @@
 from struct import pack
+from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import pandas as pd
 import os
 import asyncio
 from datetime import datetime
 import akshare as ak  # type: ignore
+import yfinance as yf  # type: ignore
 from openbb import obb
 from alphaflow.core.base import BaseCollector
 from alphaflow.core.schema import (
@@ -17,6 +19,7 @@ from alphaflow.core.data_utils import (
     FIELD_CHAINS,
     FINANCIAL_FIELD_CHAINS,
     MARKET_FIELD_CHAINS,
+    DIVIDEND_FIELD_CHAINS,
     find_closest_strictly,
     get_field_value,
     get_fcf_raw,
@@ -34,6 +37,41 @@ obb_any: Any = obb
 # 使用共享模块的函数，本地保留别名以保持兼容性
 _get_num = get_field_value
 _get_fcf_raw = get_fcf_raw
+
+# ==========================================
+# 1.1 分红与拆股获取辅助函数
+# ==========================================
+def _fetch_splits_yfinance(symbol: str) -> List[Dict[str, Any]]:
+    """
+    使用原生 yfinance 获取股票拆股历史
+    
+    Args:
+        symbol: 股票代码 (如 "AAPL", "MSFT")
+    
+    Returns:
+        拆股历史记录列表，格式: [{"date": "2024-06-10", "ratio": "4:1"}, ...]
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        splits = ticker.splits
+        if splits is not None and not splits.empty:
+            df = splits.reset_index()
+            # yfinance 返回两列: 'Date' (带时区) 和 'Stock Splits' (浮点数如 4.0)
+            df.columns = ['date', 'ratio_float']
+            # 抹平时区并转为标准日期字符串
+            df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None).dt.strftime("%Y-%m-%d")
+            # 将浮点数转换为标准拆股比例字符串 (如 4.0 -> "4:1", 0.25 -> "1:4")
+            # 使用 Fraction 完美处理非整数拆股 (如 3:2 = 1.5)
+            def _float_to_ratio(x: float) -> str:
+                f = Fraction(x).limit_denominator(1000)
+                return f"{f.numerator}:{f.denominator}"
+            df['ratio'] = df['ratio_float'].apply(_float_to_ratio)
+            # 按日期倒序排列（最新在前），与其他数据保持一致
+            df = df.sort_values("date", ascending=False)
+            return df[['date', 'ratio']].to_dict("records")
+    except Exception as e:
+        print(f"  [Native yfinance splits] Fetch failed for {symbol}: {e}")
+    return []
 
 # ==========================================
 # 2. 汇率获取函数 (模块级)
@@ -180,7 +218,7 @@ def audit_currency_context(
              if 0.9 <= math_factor <= 1.1:
                  audit_report["warning_message"] = (
                     f"DETECTED: Mixed Unit Calculation. Labels show HKD/CNY mismatch, "
-                    f"but Math Factor ({math_factor:.4f}) is ~1.0. This confirms the API uses "
+                    f"but Math Factor ({math_factor:.4f}) is ~1.0. This implies the API may uses "
                     f"Mixed Units (HKD Price / CNY Earnings) without FX conversion. "
                     f"Value is numerically consistent but implies an ~8% FX valuation bias."
                  )
@@ -190,28 +228,31 @@ def audit_currency_context(
         audit_report["alignment_factor"] = round(math_factor, 4)
         audit_report["audit_method"] = math_method
 
-        if 6.0 <= math_factor <= 8.5:
+        # --- 美股专用：USD/CNY 错配阈值 (6.0 ~ 8.5) ---
+        if market_type == MarketType.US and 6.0 <= math_factor <= 8.5:
             audit_report["is_misaligned"] = True
             audit_report["detected_gap"] = "USD_CNY_MISMATCH"
             audit_report["reporting_currency"] = "CNY"
             audit_report["trading_currency"] = "USD"
             audit_report["warning_message"] = f"CRITICAL: USD/CNY Mismatch (Factor: {math_factor:.2f})."
         
-        elif 0.8 <= math_factor <= 0.98:
-            # 只有当因子真的小于 0.98 时才报港股错配
+        # --- 港股专用：HKD/CNY 错配阈值 (0.8 ~ 0.98) ---
+        elif market_type == MarketType.HK and 0.8 <= math_factor <= 0.98:
             audit_report["is_misaligned"] = True
             audit_report["detected_gap"] = "HKD_CNY_MISMATCH"
             audit_report["reporting_currency"] = "CNY"
             audit_report["trading_currency"] = "HKD"
             audit_report["warning_message"] = f"ALERT: HKD/CNY Mismatch (Factor: {math_factor:.2f})."
         
-        elif math_factor > 20.0:
+        # --- 美股专用：ADS 错配阈值 (> 20) ---
+        # ADS (American Depositary Shares) 美股存托凭证特有，可能存在一股多份 ADS 的情况
+        elif market_type == MarketType.US and math_factor > 20.0:
             audit_report["is_misaligned"] = True
             audit_report["detected_gap"] = "ADS_MISMATCH"
             audit_report["warning_message"] = f"CRITICAL: ADS Ratio Mismatch (Factor: {math_factor:.2f})."
         
         else:
-            # 因子在 0.98 ~ 1.1 之间，认为是噪音，判定为对齐
+            # 因子在 0.98 ~ 1.1 之间或非港股/美股，认为是噪音，判定为对齐
             audit_report["is_misaligned"] = False
             audit_report["detected_gap"] = "ALIGNED"
             audit_report["alignment_factor"] = 1.0 # 重置为 1.0 以免误修
@@ -517,6 +558,37 @@ class YFinanceFetcher(BaseFetcher):
     def __init__(self, provider: str, parent):
         self.provider, self.parent = provider, parent
 
+    async def _fetch_splits_from_openbb(self, symbol: str) -> List[Dict[str, Any]]:
+        """尝试从 OpenBB 获取拆股数据并标准化"""
+        try:
+            # 尝试使用 fmp provider
+            res = await asyncio.to_thread(
+                obb_any.equity.fundamental.splits,
+                symbol=symbol,
+                provider="fmp"
+            )
+            if res and res.results:
+                standardized = []
+                for it in res.results:
+                    item = (it.model_dump() if hasattr(it, "model_dump") else it.dict())
+                    
+                    # 尝试从 OpenBB 的多样化返回结果中提取标准比例
+                    ratio_str = item.get("split_ratio")
+                    if not ratio_str and item.get("numerator") and item.get("denominator"):
+                        ratio_str = f"{item.get('numerator')}:{item.get('denominator')}"
+                    
+                    standardized.append({
+                        "date": str(item.get("date", "")),
+                        "ratio": str(ratio_str) if ratio_str else "N/A"
+                    })
+                
+                # 按日期倒序排列（最新在前），与其他数据保持一致
+                standardized.sort(key=lambda x: x.get("date", ""), reverse=True)
+                return standardized
+        except Exception as e:
+            print(f"  [YFinanceFetcher] OpenBB splits (fmp) failed for {symbol}: {e}")
+        return []
+
     async def fetch_all(
         self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
     ) -> Dict[str, List[Dict]]:
@@ -524,6 +596,8 @@ class YFinanceFetcher(BaseFetcher):
             "profile",
             "estimates",
             "share_stats",
+            "dividends",
+            "splits",
             "a_income",
             "a_balance",
             "a_cash",
@@ -541,6 +615,42 @@ class YFinanceFetcher(BaseFetcher):
                 func, p = obb_any.equity.estimates.consensus, {}
             elif name == "share_stats":
                 func, p = obb_any.equity.ownership.share_statistics, {}
+            elif name == "dividends":
+                # 分红数据：通过 OpenBB fundamental 接口获取全量历史
+                # 需要特殊处理，因为返回的可能不是标准格式
+                try:
+                    res = await asyncio.to_thread(
+                        obb_any.equity.fundamental.dividends,
+                        symbol=symbol,
+                        provider=self.provider
+                    )
+                    if res and res.results:
+                        data = [
+                            (it.model_dump() if hasattr(it, "model_dump") else it.dict())
+                            for it in res.results
+                        ]
+                        # 按日期倒序排列
+                        data.sort(key=lambda x: str(x.get("ex_dividend_date", "")), reverse=True)
+                        print(f"  [YFinanceFetcher] dividends: Got {len(data)} records")
+                        return name, data
+                except Exception as e:
+                    print(f"  [YFinanceFetcher] dividends fetch failed: {e}")
+                return name, []
+            elif name == "splits":
+                # 拆股数据：优先尝试 OpenBB，如果失败则降级到原生 yfinance
+                # OpenBB 的 splits 接口仅支持 fmp，这里先尝试 OpenBB
+                try:
+                    res = await self._fetch_splits_from_openbb(symbol)
+                    if res:
+                        print(f"  [YFinanceFetcher] splits: Got {len(res)} records from OpenBB")
+                        return name, res
+                except Exception:
+                    pass
+                # 降级：使用原生 yfinance
+                print(f"  [YFinanceFetcher] splits: Falling back to native yfinance for {symbol}...")
+                splits_records = await asyncio.to_thread(_fetch_splits_yfinance, symbol)
+                print(f"  [YFinanceFetcher] splits: Got {len(splits_records)} records from yfinance")
+                return name, splits_records
             else:
                 stmt, period = (
                     name.split("_")[1],
@@ -627,17 +737,59 @@ class AkShareFetcher(BaseFetcher):
             except:
                 return []
 
-        res = await asyncio.gather(
-            fetch_rep("利润表", "年度", limit_a),
-            fetch_rep("利润表", "报告期", limit_q),
-            fetch_rep("资产负债表", "年度", limit_a),
-            fetch_rep("资产负债表", "报告期", limit_q),
-            fetch_rep("现金流量表", "年度", limit_a),
-            fetch_rep("现金流量表", "报告期", limit_q),
-            fetch_ana("年度", limit_a),
-            fetch_ana("报告期", limit_q),
-        )
+        # 🌟 新增：专门抓取港股分红派息的内部函数
+        async def fetch_hk_dividends():
+            try:
+                df = await asyncio.to_thread(
+                    ak.stock_hk_dividend_payout_em,
+                    symbol=code
+                )
+                if df.empty:
+                    return []
+                
+                # 字段标准化：将中文列名映射为标准英文 Key
+                # 使用 DIVIDEND_FIELD_CHAINS 进行映射
+                rename_map = {}
+                for std_key, aliases in DIVIDEND_FIELD_CHAINS.items():
+                    # 找到中文列名
+                    for alias in aliases:
+                        if alias in df.columns:
+                            rename_map[alias] = std_key.lower()
+                            break
+                
+                df = df.rename(columns=rename_map)
+                
+                # 统一日期格式为 YYYY-MM-DD
+                date_cols = ["ex_dividend_date", "announce_date", "payment_date"]
+                for col in date_cols:
+                    if col in df.columns:
+                        df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("N/A")
+                
+                # 填充空值
+                df = df.fillna("N/A")
+                
+                # 按日期倒序排列（最新在前），与三表保持一致
+                if "ex_dividend_date" in df.columns:
+                    df = df.sort_values("ex_dividend_date", ascending=False)
+                
+                return df.to_dict(orient="records")
+            except Exception as e:
+                print(f"  [AkShareFetcher] Failed to fetch HK dividends for {symbol}: {e}")
+                return []
 
+        # 🌟 所有任务并行执行（包含港股分红）
+        res = await asyncio.gather(
+            fetch_rep("利润表", "年度", limit_a),       # 0
+            fetch_rep("利润表", "报告期", limit_q),     # 1
+            fetch_rep("资产负债表", "年度", limit_a),   # 2
+            fetch_rep("资产负债表", "报告期", limit_q), # 3
+            fetch_rep("现金流量表", "年度", limit_a),   # 4
+            fetch_rep("现金流量表", "报告期", limit_q), # 5
+            fetch_ana("年度", limit_a),               # 6
+            fetch_ana("报告期", limit_q),             # 7
+            fetch_hk_dividends()                      # 8 <- 港股分红
+        )
+        
         # metrics 已移至 market_data.py 获取，此处不再重复获取
         profile, shares = [], None
         try:
@@ -674,6 +826,7 @@ class AkShareFetcher(BaseFetcher):
             "profile": profile,
             "estimates": [],
             "share_stats": [],
+            "dividends": res[8],  # 港股分红数据
             "a_income": res[0],
             "q_income": res[1],
             "a_balance": res[2],
@@ -733,13 +886,14 @@ class FundamentalCollector(BaseCollector):
                 symbol, self.limit_annual, self.limit_quarterly
             )
 
-            # Task 2: YFinance 拿补丁数据 (Estimates + Share Stats)
+            # Task 2: YFinance 拿补丁数据 (Estimates + Share Stats + Splits)
             # 注意：YFinanceFetcher 内部会自动处理 clean_symbol
+            # 港股分红已由 AkShareFetcher 处理，这里只需要抓取拆股
             yf_task = yf_fetcher.fetch_all(
                 symbol,
                 self.limit_annual,
                 self.limit_quarterly,
-                tasks=["estimates", "share_stats"],
+                tasks=["estimates", "share_stats", "splits"],
             )
 
             db_ak, db_yf = await asyncio.gather(ak_task, yf_task)
@@ -756,7 +910,7 @@ class FundamentalCollector(BaseCollector):
                 symbol, self.limit_annual, self.limit_quarterly
             )
         else:
-            # 🔵 美股/其他：纯 YFinance 路径
+            # 🔵 美股/其他：纯 YFinance 路径 - 使用全量抓取
             fetcher = YFinanceFetcher(self.provider, self)
             db = await fetcher.fetch_all(
                 symbol, self.limit_annual, self.limit_quarterly
@@ -766,6 +920,14 @@ class FundamentalCollector(BaseCollector):
             pack.fundamentals = {}
         for b in ["profile", "estimates", "share_stats"]:
             pack.fundamentals[b] = db[b][0] if db.get(b) else None
+        
+        # 无差别存储分红和拆股历史（只要 db 里有，就装入）
+        pack.fundamentals["dividends_history"] = None
+        pack.fundamentals["splits_history"] = None
+        if db.get("dividends"):
+            pack.fundamentals["dividends_history"] = db["dividends"]
+        if db.get("splits"):
+            pack.fundamentals["splits_history"] = db["splits"]
 
         q_inc, a_inc = db.get("q_income", []), db.get("a_income", [])
         latest_is = q_inc[0] if q_inc else (a_inc[0] if a_inc else None)
@@ -852,16 +1014,22 @@ class FundamentalCollector(BaseCollector):
             print(f"  [Currency] Audit: {currency_ctx.get('detected_gap')}, Factor: {currency_ctx.get('alignment_factor')}")
             
             # 步骤 4: 根据审计结果决定是否转换
-            if currency_ctx.get("is_misaligned") and fx_rate is not None and mcap_input is not None:
-                mcap_rmb = mcap_input * fx_rate
-                print(
-                    f"  [Currency] Aligned Market Cap: {mcap_input:,.0f} -> {mcap_rmb:,.0f} (Rate: {fx_rate:.4f})"
-                )
-                mcap_input = mcap_rmb
-                # 更新 market_metrics 中的对齐后市值
-                if pack.market_metrics:
-                    pack.market_metrics["market_cap_rmb"] = mcap_input
-                    pack.market_metrics["fx_rate"] = fx_rate
+            if currency_ctx.get("is_misaligned") and mcap_input is not None:
+                fx_rate = None
+                if market_type == MarketType.HK:
+                    fx_rate = await get_fx_rate("HKD", "CNY")
+                elif market_type == MarketType.US:
+                    fx_rate = await get_fx_rate("USD", "CNY")
+                if fx_rate is not None:
+                    mcap_rmb = mcap_input * fx_rate
+                    print(
+                        f"  [Currency] Aligned Market Cap: {mcap_input:,.0f} -> {mcap_rmb:,.0f} (Rate: {fx_rate:.4f})"
+                    )
+                    mcap_input = mcap_rmb
+                    # 更新 market_metrics 中的对齐后市值
+                    if pack.market_metrics:
+                        pack.market_metrics["market_cap_rmb"] = mcap_input
+                        pack.market_metrics["fx_rate"] = fx_rate
 
             q_ana_pool = db.get("q_analysis", [])
             a_ana_pool = db.get("a_analysis", [])
