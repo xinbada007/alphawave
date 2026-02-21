@@ -361,6 +361,68 @@ def calc_ttm_stitch(
 
 
 # ==========================================
+# 2.1 年化乘数计算函数 (模块级)
+# ==========================================
+def get_annual_multiplier(
+    latest_is: Dict[str, Any],
+    latest_ana: Optional[Dict[str, Any]],
+    p_type: str,
+    is_cumulative: bool
+) -> Optional[float]:
+    """
+    智能推断年化乘数（支持离散制、累积制、非自然年结日）
+    
+    核心原则：数据有就有，没有就没有，绝对不硬算
+    
+    返回值：
+    - 精确计算成功 -> 返回年化乘数 (如 4.0, 2.0, 1.333...)
+    - 无法计算 -> 返回 None
+    """
+    # 年度报告：不需要年化
+    if p_type == "annual":
+        return 1.0
+    
+    # 离散制（美股/yfinance）：季度永远是 3 个月，精确已知
+    if not is_cumulative:
+        return 4.0
+
+    # ==================== 累积制（A股/港股）====================
+    # 必须是精确计算，任何一步失败则返回 None
+    
+    # 优先级 1: DATE_TYPE_CODE (最可靠)
+    # 001=年报12月, 002=半年报6月, 003=一季报3月, 004=三季报9月
+    date_type = latest_is.get("DATE_TYPE_CODE") or (latest_ana or {}).get("DATE_TYPE_CODE")
+    if date_type:
+        if date_type == "003": return 12.0 / 3   # Q1
+        if date_type == "002": return 12.0 / 6   # H1
+        if date_type == "004": return 12.0 / 9   # Q3
+        if date_type == "001": return 1.0         # 年度
+        # 未知的 DATE_TYPE_CODE -> 无法计算
+        return None
+
+    # 优先级 2: START_DATE 物理天数计算 (对非自然年结日最有效)
+    s_raw = latest_is.get("START_DATE")
+    e_raw = latest_is.get("REPORT_DATE") or latest_is.get("period_ending")
+    if s_raw and e_raw:
+        try:
+            s_date = pd.to_datetime(s_raw)
+            e_date = pd.to_datetime(e_raw)
+            days = (e_date - s_date).days
+            
+            # 防御：天数必须在合理范围 (30天 ~ 550天)
+            if 30 <= days <= 400:
+                months = round(days / 30.0)
+                if months > 0:
+                    return 12.0 / months
+        except Exception:
+            pass
+    # START_DATE 缺失或计算失败 -> 无法计算
+    
+    # 无法精确计算 -> 返回 None（不硬算）
+    return None
+
+
+# ==========================================
 # 3. 计算引擎层 (切片拼接法 TTM + 严密年化)
 # ==========================================
 class FinancialCalculator:
@@ -458,16 +520,10 @@ class FinancialCalculator:
         ocf, oi = _get_num(cur_cf, "OCF"), _get_num(latest_is, "OI")
         fcf_cur = _get_fcf_raw(cur_cf)
 
-        cur_date = pd.to_datetime(latest_is.get("period_ending"))
-        ann_multiplier = (
-            (12.0 / cur_date.month)
-            if (is_cumulative and cur_date and cur_date.month > 0)
-            else 4.0
-        )
-        if p_type == "annual":
-            ann_multiplier = 1.0
+        # 使用智能年化乘数计算函数（数据有就有，没有就不硬算）
+        ann_multiplier = get_annual_multiplier(latest_is, latest_ana, p_type, is_cumulative)
 
-        # ROE
+        # ROE 计算（遵循不硬算原则）
         roe_off = (
             latest_ana.get("ROE_YEARLY") or latest_ana.get("ROE_AVG")
             if latest_ana
@@ -475,11 +531,16 @@ class FinancialCalculator:
         )
         if roe_off is not None:
             val = float(roe_off) / 100
-            if latest_ana and not latest_ana.get("ROE_YEARLY") and is_cumulative and cur_date:
-                val = val * (12.0 / cur_date.month)
+            # 只有在能获取到精确年化乘数时才进行年化
+            if latest_ana and not latest_ana.get("ROE_YEARLY") and is_cumulative and ann_multiplier is not None:
+                val = val * ann_multiplier
             indicators["roe_period_actual"] = round(val, 4)
-        elif ni and eq and eq > 0:
+        elif ni and eq and eq > 0 and ann_multiplier is not None:
+            # 只有在能获取到精确年化乘数时才计算 ROE
             indicators["roe_period_actual"] = round((ni * ann_multiplier) / eq, 4)
+        else:
+            # 无法计算时返回 None（不硬算）
+            indicators["roe_period_actual"] = None
 
         # Margin
         npm_off = latest_ana.get("NET_PROFIT_RATIO") if latest_ana else None
@@ -554,7 +615,7 @@ class BaseFetcher:
         raise NotImplementedError
 
 
-class YFinanceFetcher(BaseFetcher):
+class OBBFetcher(BaseFetcher):
     def __init__(self, provider: str, parent):
         self.provider, self.parent = provider, parent
 
@@ -586,7 +647,7 @@ class YFinanceFetcher(BaseFetcher):
                 standardized.sort(key=lambda x: x.get("date", ""), reverse=True)
                 return standardized
         except Exception as e:
-            print(f"  [YFinanceFetcher] OpenBB splits (fmp) failed for {symbol}: {e}")
+            print(f"  [OBBFetcher] OpenBB splits (fmp) failed for {symbol}: {e}")
         return []
 
     async def fetch_all(
@@ -596,6 +657,8 @@ class YFinanceFetcher(BaseFetcher):
             "profile",
             "estimates",
             "share_stats",
+            "insider_trading", # 新增：内部交易
+            "management", # 新增：管理层信息
             "dividends",
             "splits",
             "a_income",
@@ -631,10 +694,10 @@ class YFinanceFetcher(BaseFetcher):
                         ]
                         # 按日期倒序排列
                         data.sort(key=lambda x: str(x.get("ex_dividend_date", "")), reverse=True)
-                        print(f"  [YFinanceFetcher] dividends: Got {len(data)} records")
+                        print(f"  [OBBFetcher] dividends: Got {len(data)} records")
                         return name, data
                 except Exception as e:
-                    print(f"  [YFinanceFetcher] dividends fetch failed: {e}")
+                    print(f"  [OBBFetcher] dividends fetch failed: {e}")
                 return name, []
             elif name == "splits":
                 # 拆股数据：优先尝试 OpenBB，如果失败则降级到原生 yfinance
@@ -642,15 +705,54 @@ class YFinanceFetcher(BaseFetcher):
                 try:
                     res = await self._fetch_splits_from_openbb(symbol)
                     if res:
-                        print(f"  [YFinanceFetcher] splits: Got {len(res)} records from OpenBB")
+                        print(f"  [OBBFetcher] splits: Got {len(res)} records from OpenBB")
                         return name, res
                 except Exception:
                     pass
                 # 降级：使用原生 yfinance
-                print(f"  [YFinanceFetcher] splits: Falling back to native yfinance for {symbol}...")
+                print(f"  [OBBFetcher] splits: Falling back to native yfinance for {symbol}...")
                 splits_records = await asyncio.to_thread(_fetch_splits_yfinance, symbol)
-                print(f"  [YFinanceFetcher] splits: Got {len(splits_records)} records from yfinance")
+                print(f"  [OBBFetcher] splits: Got {len(splits_records)} records from yfinance")
                 return name, splits_records
+            elif name == "insider_trading":
+                # 内部交易数据：通过 OpenBB ownership 接口获取
+                try:
+                    res = await asyncio.to_thread(
+                        obb_any.equity.ownership.insider_trading,
+                        symbol=symbol,
+                        provider="sec"
+                    )
+                    if res and res.results:
+                        data = [
+                            (it.model_dump() if hasattr(it, "model_dump") else it.dict())
+                            for it in res.results
+                        ]
+                        # 按日期倒序排列
+                        data.sort(key=lambda x: str(x.get("transaction_date", "")), reverse=True)
+                        print(f"  [OBBFetcher] insider_trading: Got {len(data)} records")
+                        return name, data
+                except Exception as e:
+                    print(f"  [OBBFetcher] insider_trading fetch failed: {e}")
+                return name, []
+            elif name == "management":
+                # 管理层信息：通过 OpenBB fundamental 接口获取
+                try:
+                    res = await asyncio.to_thread(
+                        obb_any.equity.fundamental.management,
+                        symbol=symbol,
+                        provider=self.provider
+                    )
+                    if res and res.results:
+                        data = [
+                            (it.model_dump() if hasattr(it, "model_dump") else it.dict())
+                            for it in res.results
+                        ]
+                        print(f"  [OBBFetcher] management: Got {len(data)} records")
+                        return name, data
+                except Exception as e:
+                    print(f"  [OBBFetcher] management fetch failed: {e}")
+                return name, []
+           
             else:
                 stmt, period = (
                     name.split("_")[1],
@@ -663,7 +765,7 @@ class YFinanceFetcher(BaseFetcher):
                 )
             
             # 调试信息
-            print(f"  [YFinanceFetcher] Fetching {name} for {symbol} with provider={self.provider}...")
+            print(f"  [OBBFetcher] Fetching {name} for {symbol} with provider={self.provider}...")
             
             res = await self.parent._fetch_with_fallback(
                 symbol, func, providers=[self.provider], is_series=True, **p
@@ -671,9 +773,9 @@ class YFinanceFetcher(BaseFetcher):
             
             # 调试信息
             if res:
-                print(f"  [YFinanceFetcher] {name}: Got {len(res)} records")
+                print(f"  [OBBFetcher] {name}: Got {len(res)} records")
             else:
-                print(f"  [YFinanceFetcher] {name}: No data returned")
+                print(f"  [OBBFetcher] {name}: No data returned")
             
             return name, res or []
 
@@ -704,6 +806,14 @@ class AkShareFetcher(BaseFetcher):
                 )
                 if df.empty:
                     return []
+                
+                # ===== 提取元数据 (DATE_TYPE_CODE, START_DATE) =====
+                meta_dict = {}
+                meta_cols = [c for c in ["DATE_TYPE_CODE", "START_DATE"] if c in df.columns]
+                if meta_cols:
+                    meta_df = df[["REPORT_DATE"] + meta_cols].drop_duplicates()
+                    meta_dict = meta_df.set_index("REPORT_DATE").to_dict("index")
+                
                 tdf = (
                     df.pivot_table(
                         index="REPORT_DATE",
@@ -714,6 +824,16 @@ class AkShareFetcher(BaseFetcher):
                     .sort_index(ascending=False)
                     .head(lim)
                 )
+                
+                # ===== 将元数据拼回 tdf =====
+                for col_name in meta_cols:
+                    if meta_dict:
+                        sample_value = next(iter(meta_dict.values()), {})
+                        if col_name in sample_value:
+                            tdf[col_name] = tdf.index.to_series().map(
+                                lambda x: meta_dict.get(x, {}).get(col_name)
+                            )
+                
                 tdf.index = pd.to_datetime(tdf.index).strftime("%Y-%m-%d")
                 tdf.index.name = "period_ending"
                 return tdf.reset_index().to_dict(orient="records")
@@ -879,15 +999,15 @@ class FundamentalCollector(BaseCollector):
         if is_hk:
             # 🟢 港股混合编排模式：并行执行
             ak_fetcher = AkShareFetcher(self)
-            yf_fetcher = YFinanceFetcher(self.provider, self)
+            yf_fetcher = OBBFetcher(self.provider, self)
 
             # Task 1: AkShare 拿所有核心财报
             ak_task = ak_fetcher.fetch_all(
                 symbol, self.limit_annual, self.limit_quarterly
             )
 
-            # Task 2: YFinance 拿补丁数据 (Estimates + Share Stats + Splits)
-            # 注意：YFinanceFetcher 内部会自动处理 clean_symbol
+            # Task 2: OBB 拿补丁数据 (Estimates + Share Stats + Splits)
+            # 注意：OBBFetcher 内部会自动处理 clean_symbol
             # 港股分红已由 AkShareFetcher 处理，这里只需要抓取拆股
             yf_task = yf_fetcher.fetch_all(
                 symbol,
@@ -910,8 +1030,8 @@ class FundamentalCollector(BaseCollector):
                 symbol, self.limit_annual, self.limit_quarterly
             )
         else:
-            # 🔵 美股/其他：纯 YFinance 路径 - 使用全量抓取
-            fetcher = YFinanceFetcher(self.provider, self)
+            # 🔵 美股/其他：纯 OBB 路径 - 使用全量抓取
+            fetcher = OBBFetcher(self.provider, self)
             db = await fetcher.fetch_all(
                 symbol, self.limit_annual, self.limit_quarterly
             )
@@ -921,13 +1041,22 @@ class FundamentalCollector(BaseCollector):
         for b in ["profile", "estimates", "share_stats"]:
             pack.fundamentals[b] = db[b][0] if db.get(b) else None
         
-        # 无差别存储分红和拆股历史（只要 db 里有，就装入）
+        # 无差别存储分红、拆股和内部交易历史（只要 db 里有，就装入）
         pack.fundamentals["dividends_history"] = None
         pack.fundamentals["splits_history"] = None
+        pack.fundamentals["insider_trading_history"] = None
+        pack.fundamentals["management_history"] = None
+        pack.fundamentals["management_discussion_analysis_history"] = None
         if db.get("dividends"):
             pack.fundamentals["dividends_history"] = db["dividends"]
         if db.get("splits"):
             pack.fundamentals["splits_history"] = db["splits"]
+        if db.get("insider_trading"):
+            pack.fundamentals["insider_trading_history"] = db["insider_trading"]
+        if db.get("management"):
+            pack.fundamentals["management_history"] = db["management"]
+        if db.get("management_discussion_analysis"):
+            pack.fundamentals["management_discussion_analysis_history"] = db["management_discussion_analysis"]
 
         q_inc, a_inc = db.get("q_income", []), db.get("a_income", [])
         latest_is = q_inc[0] if q_inc else (a_inc[0] if a_inc else None)
@@ -1128,7 +1257,7 @@ class FundamentalCollector(BaseCollector):
                 ]
             return True, res.to_df() if hasattr(res, "to_df") else res
         except Exception as e:
-            print(f"  [YFinanceFetcher] Error calling {func.__name__} with provider={provider}: {e}")
+            print(f"  [OBBFetcher] Error calling {func.__name__} with provider={provider}: {e}")
             return False, None
         except:
             return False, None
