@@ -1,4 +1,3 @@
-from struct import pack
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import pandas as pd
@@ -13,12 +12,8 @@ from alphaflow.core.schema import (
     AnalysisContext,
     ComponentOutput,
     ResearchPack,
-    DataFrameModel,
 )
 from alphaflow.core.data_utils import (
-    FIELD_CHAINS,
-    FINANCIAL_FIELD_CHAINS,
-    MARKET_FIELD_CHAINS,
     DIVIDEND_FIELD_CHAINS,
     find_closest_strictly,
     get_field_value,
@@ -26,7 +21,7 @@ from alphaflow.core.data_utils import (
     get_market_type,
     MarketType,
 )
-from alphaflow.utils.api_rotator import get_api_key, report_api_usage
+from alphaflow.utils.api_rotator import get_api_key
 
 # 全局绕过 Mypy 检查
 obb_any: Any = obb
@@ -39,7 +34,7 @@ _get_num = get_field_value
 _get_fcf_raw = get_fcf_raw
 
 # ==========================================
-# 1.1 分红与拆股获取辅助函数
+# 1.1 分红、拆股与大股东数据获取辅助函数
 # ==========================================
 def _fetch_splits_yfinance(symbol: str) -> List[Dict[str, Any]]:
     """
@@ -71,6 +66,80 @@ def _fetch_splits_yfinance(symbol: str) -> List[Dict[str, Any]]:
             return df[['date', 'ratio']].to_dict("records")
     except Exception as e:
         print(f"  [Native yfinance splits] Fetch failed for {symbol}: {e}")
+    return []
+
+
+def _fetch_major_holders_yfinance(symbol: str) -> List[Dict[str, Any]]:
+    """
+    使用原生 yfinance 获取大股东数据 (同步阻塞函数)
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        # 这里的属性访问会触发网络 I/O，所以必须在这个同步函数里完成
+        mh = ticker.major_holders
+        ih = ticker.institutional_holders
+        
+        holders_data = []
+        if mh is not None and not mh.empty:
+            holders_data.append({"type": "major_ownership_breakdown", "data": mh.to_dict(orient="records")})
+        
+        if ih is not None and not ih.empty:
+            top_inst = ih.head(10).to_dict(orient="records")
+            holders_data.append({"type": "top_institutions", "data": top_inst})
+            
+        return holders_data
+    except Exception as e:
+        print(f"  [Fallback] yfinance major_holders failed for {symbol}: {e}")
+        return []
+
+
+def _fetch_earnings_yfinance(symbol: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    使用原生 yfinance 获取财报日历 (包含历史和预期)
+    
+    Args:
+        symbol: 股票代码 (如 "AAPL", "MSFT")
+        limit: 需要获取的最近财报条数 (默认 10 条)
+    
+    Returns:
+        财报日历记录列表，包含报告日期、预期EPS、实际EPS、超预期比例
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        
+        # 🌟 关键点：使用 earnings_dates 获取时间序列的财报日历
+        ed = ticker.earnings_dates
+        
+        if ed is not None and not ed.empty:
+            df = ed.reset_index()
+            
+            # 1. 统一列名 (yfinance 的日期列默认叫 'Earnings Date')
+            df.rename(columns={'Earnings Date': 'report_date'}, inplace=True)
+            
+            # 2. 清洗时间戳 (抹平时区，转为大模型易读的 YYYY-MM-DD)
+            if 'report_date' in df.columns:
+                df['report_date'] = pd.to_datetime(df['report_date']).dt.tz_localize(None).dt.strftime("%Y-%m-%d")
+            
+            # 3. yfinance 默认已经是按日期降序排列的，直接取前 n 条
+            df = df.head(limit)
+            
+            # 4. 清理 NaN 值，防止 JSON 序列化失败
+            df = df.fillna("N/A")
+            
+            # 返回标准的 List[Dict] 格式
+            return df.to_dict(orient="records")
+        
+        # 兜底：如果 earnings_dates 为空，再尝试旧版的 calendar
+        cal = ticker.calendar
+        if cal is not None:
+            if isinstance(cal, pd.DataFrame) and not cal.empty:
+                return [cal.to_dict()]
+            elif isinstance(cal, dict) and cal:
+                return [cal]
+
+    except Exception as e:
+        print(f"  [Fallback] yfinance earnings_calendar failed for {symbol}: {e}")
+        
     return []
 
 # ==========================================
@@ -616,175 +685,222 @@ class BaseFetcher:
 
 
 class OBBFetcher(BaseFetcher):
+    # ========== 字典任务路由配置 ==========
+    # 直接存储函数引用，更安全、无 eval
+    TASK_CONFIG: Dict[str, Dict[str, Any]] = {
+        # 简单任务：直接映射 OpenBB 函数
+        "profile": {"func": obb_any.equity.profile},
+        "estimates": {"func": obb_any.equity.estimates.consensus},
+        "share_stats": {"func": obb_any.equity.ownership.share_statistics},
+        "management": {"func": obb_any.equity.fundamental.management},
+        
+        # 需配置排序字段的任务
+        "dividends": {
+            "func": obb_any.equity.fundamental.dividends,
+            "sort_key": "ex_dividend_date"
+        },
+        "insider_trading": {
+            "func": obb_any.equity.ownership.insider_trading,
+            "sort_key": "transaction_date",
+            "provider": "sec",  # yfinance 可能拿不到内幕交易
+            "limit": 50
+        },
+        
+        # 财务报表：动态映射 (a_income, q_income, a_balance, etc.)
+        # 这些在运行时动态处理，不在此配置中
+    }
+
     def __init__(self, provider: str, parent):
         self.provider, self.parent = provider, parent
+        # 懒加载 Semaphore，避免事件循环未初始化的 RuntimeError
+        self._semaphore: Optional[asyncio.Semaphore] = None
 
-    async def _fetch_splits_from_openbb(self, symbol: str) -> List[Dict[str, Any]]:
-        """尝试从 OpenBB 获取拆股数据并标准化"""
-        try:
-            # 尝试使用 fmp provider
-            res = await asyncio.to_thread(
-                obb_any.equity.fundamental.splits,
-                symbol=symbol,
-                provider="fmp"
-            )
-            if res and res.results:
-                standardized = []
-                for it in res.results:
-                    item = (it.model_dump() if hasattr(it, "model_dump") else it.dict())
-                    
-                    # 尝试从 OpenBB 的多样化返回结果中提取标准比例
-                    ratio_str = item.get("split_ratio")
-                    if not ratio_str and item.get("numerator") and item.get("denominator"):
-                        ratio_str = f"{item.get('numerator')}:{item.get('denominator')}"
-                    
-                    standardized.append({
-                        "date": str(item.get("date", "")),
-                        "ratio": str(ratio_str) if ratio_str else "N/A"
-                    })
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        """懒加载：确保在异步上下文中创建"""
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(3)  # 限制最大并发数为 5，防止 HTTP 429
+        return self._semaphore
+
+    async def _exec_obb_task(
+        self,
+        func: Callable,
+        symbol: str,
+        name: str,
+        provider: Optional[str] = None,
+        sort_key: Optional[str] = None,
+        filter_symbol: bool = False,
+        **kwargs
+    ) -> List[Dict]:
+        """
+        [通用抽象] OpenBB 任务执行器
+        :param func: OpenBB 的函数对象
+        :param symbol: 股票代码
+        :param name: 任务名称(用于日志)
+        :param provider: 强制指定 provider (如 'nasdaq', 'sec')，None 则使用默认
+        :param sort_key: 返回列表的排序键 (如 'date')
+        :param filter_symbol: 是否需要二次过滤 symbol (针对 nasdaq 等返回全量数据的接口)
+        :param kwargs: 传递给 func 的其他参数 (如 limit, start_date)
+        """
+        target_provider = provider if provider else self.provider
+        
+        # ========== 并发控制 ==========
+        async with self.semaphore:
+            try:
+                # 1. 异步执行
+                res = await asyncio.to_thread(
+                    func,
+                    symbol=symbol,
+                    provider=target_provider,
+                    **kwargs
+                )
                 
-                # 按日期倒序排列（最新在前），与其他数据保持一致
-                standardized.sort(key=lambda x: x.get("date", ""), reverse=True)
-                return standardized
-        except Exception as e:
-            print(f"  [OBBFetcher] OpenBB splits (fmp) failed for {symbol}: {e}")
+                # 2. 提取并序列化数据 (兼容 Pydantic v1/v2/Dict)
+                data = []
+                raw_results = []
+                
+                if res:
+                    if hasattr(res, 'results') and res.results:
+                        raw_results = res.results
+                    elif isinstance(res, list):
+                        raw_results = res
+
+                for item in raw_results:
+                    if hasattr(item, "model_dump"):
+                        data.append(item.model_dump())
+                    elif hasattr(item, "dict"):
+                        data.append(item.dict())
+                    elif isinstance(item, dict):
+                        data.append(item)
+
+                # 3. (可选) 二次过滤 Symbol
+                if filter_symbol and data:
+                    data = [x for x in data if str(x.get("symbol", "")).upper() == symbol.upper()]
+
+                # 4. (可选) 排序
+                if sort_key and data:
+                    data.sort(key=lambda x: str(x.get(sort_key, "")), reverse=True)
+                    
+                if data:
+                    return data
+                    
+            except Exception as e:
+                print(f"  [OBBFetcher] {name} fetch failed: {e}")
+            
         return []
 
     async def fetch_all(
         self, symbol: str, limit_a: int, limit_q: int, tasks: Optional[List[str]] = None
     ) -> Dict[str, List[Dict]]:
+        # 完整的任务列表
         all_task_names = [
-            "profile",
-            "estimates",
-            "share_stats",
-            "insider_trading", # 新增：内部交易
-            "management", # 新增：管理层信息
-            "dividends",
-            "splits",
-            "a_income",
-            "a_balance",
-            "a_cash",
-            "q_income",
-            "q_balance",
-            "q_cash",
+            "profile", "estimates", "share_stats", 
+            "major_holders", "insider_trading", "earnings_cal", "management",
+            "dividends", "splits",
+            "a_income", "a_balance", "a_cash",
+            "q_income", "q_balance", "q_cash",
         ]
         target_tasks = tasks if tasks else all_task_names
 
         async def fetch_item(name: str):
-            p: Dict[str, Any] = {}
-            if name == "profile":
-                func, p = obb_any.equity.profile, {}
-            elif name == "estimates":
-                func, p = obb_any.equity.estimates.consensus, {}
-            elif name == "share_stats":
-                func, p = obb_any.equity.ownership.share_statistics, {}
-            elif name == "dividends":
-                # 分红数据：通过 OpenBB fundamental 接口获取全量历史
-                # 需要特殊处理，因为返回的可能不是标准格式
-                try:
-                    res = await asyncio.to_thread(
-                        obb_any.equity.fundamental.dividends,
-                        symbol=symbol,
-                        provider=self.provider
-                    )
-                    if res and res.results:
-                        data = [
-                            (it.model_dump() if hasattr(it, "model_dump") else it.dict())
-                            for it in res.results
-                        ]
-                        # 按日期倒序排列
-                        data.sort(key=lambda x: str(x.get("ex_dividend_date", "")), reverse=True)
-                        print(f"  [OBBFetcher] dividends: Got {len(data)} records")
-                        return name, data
-                except Exception as e:
-                    print(f"  [OBBFetcher] dividends fetch failed: {e}")
-                return name, []
-            elif name == "splits":
-                # 拆股数据：优先尝试 OpenBB，如果失败则降级到原生 yfinance
-                # OpenBB 的 splits 接口仅支持 fmp，这里先尝试 OpenBB
-                try:
-                    res = await self._fetch_splits_from_openbb(symbol)
-                    if res:
-                        print(f"  [OBBFetcher] splits: Got {len(res)} records from OpenBB")
-                        return name, res
-                except Exception:
-                    pass
-                # 降级：使用原生 yfinance
-                print(f"  [OBBFetcher] splits: Falling back to native yfinance for {symbol}...")
-                splits_records = await asyncio.to_thread(_fetch_splits_yfinance, symbol)
-                print(f"  [OBBFetcher] splits: Got {len(splits_records)} records from yfinance")
-                return name, splits_records
-            elif name == "insider_trading":
-                # 内部交易数据：通过 OpenBB ownership 接口获取
-                try:
-                    res = await asyncio.to_thread(
-                        obb_any.equity.ownership.insider_trading,
-                        symbol=symbol,
-                        provider="sec"
-                    )
-                    if res and res.results:
-                        data = [
-                            (it.model_dump() if hasattr(it, "model_dump") else it.dict())
-                            for it in res.results
-                        ]
-                        # 按日期倒序排列
-                        data.sort(key=lambda x: str(x.get("transaction_date", "")), reverse=True)
-                        print(f"  [OBBFetcher] insider_trading: Got {len(data)} records")
-                        return name, data
-                except Exception as e:
-                    print(f"  [OBBFetcher] insider_trading fetch failed: {e}")
-                return name, []
-            elif name == "management":
-                # 管理层信息：通过 OpenBB fundamental 接口获取
-                try:
-                    res = await asyncio.to_thread(
-                        obb_any.equity.fundamental.management,
-                        symbol=symbol,
-                        provider=self.provider
-                    )
-                    if res and res.results:
-                        data = [
-                            (it.model_dump() if hasattr(it, "model_dump") else it.dict())
-                            for it in res.results
-                        ]
-                        print(f"  [OBBFetcher] management: Got {len(data)} records")
-                        return name, data
-                except Exception as e:
-                    print(f"  [OBBFetcher] management fetch failed: {e}")
-                return name, []
-           
-            else:
-                stmt, period = (
-                    name.split("_")[1],
-                    ("annual" if "a_" in name else "quarter"),
+            # ========== 改进3: 使用字典路由替代 if-elif ==========
+            
+            # ---------------------------------------------------------
+            # 1. 字典映射的简单任务
+            # ---------------------------------------------------------
+            if name in self.TASK_CONFIG:
+                config = self.TASK_CONFIG[name]
+                # 直接使用函数引用 (已消除 eval)
+                func = config["func"]
+                return name, await self._exec_obb_task(
+                    func, symbol, name,
+                    sort_key=config.get("sort_key"),
+                    **{k: v for k, v in config.items() if k not in ("func", "sort_key")}
                 )
-                limit = limit_a if period == "annual" else limit_q
-                func, p = (
-                    getattr(obb_any.equity.fundamental, stmt),
-                    {"period": period, "limit": limit},
-                )
-            
-            # 调试信息
-            print(f"  [OBBFetcher] Fetching {name} for {symbol} with provider={self.provider}...")
-            
-            res = await self.parent._fetch_with_fallback(
-                symbol, func, providers=[self.provider], is_series=True, **p
-            )
-            
-            # 调试信息
-            if res:
-                print(f"  [OBBFetcher] {name}: Got {len(res)} records")
-            else:
-                print(f"  [OBBFetcher] {name}: No data returned")
-            
-            return name, res or []
 
+            # ---------------------------------------------------------
+            # 2. 特殊逻辑任务 (Earnings, Major Holders, Splits)
+            # ---------------------------------------------------------
+            elif name == "earnings_cal":
+                # 策略：优先使用 fmp provider，失败则降级到原生 yfinance
+                try:
+                    data = await self._exec_obb_task(
+                        obb_any.equity.calendar.earnings,
+                        symbol, name,
+                        provider="fmp"  # 使用 fmp 避免 Provider 错误
+                    )
+                    if data:
+                        return name, data
+                except Exception as e:
+                    print(f"  [OBBFetcher] earnings_cal (fmp) failed: {e}")
+                
+                # 降级：使用原生 yfinance 获取最近 8 次的财报记录
+                print(f"  [OBBFetcher] earnings_cal: Falling back to native yfinance...")
+                fallback_data = await asyncio.to_thread(_fetch_earnings_yfinance, symbol, 8)
+                return name, fallback_data
+
+            elif name == "major_holders":
+                # 策略：先试 OpenBB，失败则用原生 yfinance 兜底
+                # Step 1: OpenBB
+                data = await self._exec_obb_task(obb_any.equity.ownership.major_holders, symbol, name)
+                if data:
+                    return name, data
+                
+                # Step 2: Native YFinance Fallback (安全地在子线程执行)
+                print(f"  [OBBFetcher] major_holders: Falling back to native yfinance...")
+                fallback_data = await asyncio.to_thread(_fetch_major_holders_yfinance, symbol)
+                
+                if fallback_data:
+                    return name, fallback_data
+                    
+                return name, []
+
+            elif name == "splits":
+                # 策略：OpenBB (fmp) -> Native YFinance
+                data = await self._exec_obb_task(
+                    obb_any.equity.calendar.splits, 
+                    symbol, name, 
+                    provider="fmp", 
+                    sort_key="date"
+                )
+                if data: return name, data
+                
+                # Native Fallback
+                print(f"  [OBBFetcher] splits: Falling back to native yfinance...")
+                native_data = await asyncio.to_thread(_fetch_splits_yfinance, symbol)
+                return name, native_data
+
+            # ---------------------------------------------------------
+            # 3. 财务报表 (动态映射: a_income, q_balance, etc.)
+            # ---------------------------------------------------------
+            else:
+                # 解析任务名: a_income -> income, annual
+                parts = name.split("_")
+                if len(parts) >= 2 and parts[1] in ("income", "balance", "cash"):
+                    stmt_key = parts[1]
+                    period = "annual" if "a_" in name else "quarter"
+                    limit = limit_a if period == "annual" else limit_q
+                    
+                    if hasattr(obb_any.equity.fundamental, stmt_key):
+                        func = getattr(obb_any.equity.fundamental, stmt_key)
+                        return name, await self._exec_obb_task(
+                            func, symbol, name, 
+                            period=period, limit=limit
+                        )
+                
+            return name, []
+
+        # 并行执行所有任务
         all_res = await asyncio.gather(*[fetch_item(tn) for tn in target_tasks])
+        
         result = {name: data for name, data in all_res}
+        
+        # 确保所有请求的 key 都在结果中 (即使为空)
         if tasks is None:
             for name in all_task_names:
                 if name not in result:
                     result[name] = []
+                    
         return result
 
 class AkShareFetcher(BaseFetcher):
@@ -1013,7 +1129,7 @@ class FundamentalCollector(BaseCollector):
                 symbol,
                 self.limit_annual,
                 self.limit_quarterly,
-                tasks=["estimates", "share_stats", "splits"],
+                tasks=["estimates", "share_stats", "splits", "major_holders", "earnings_cal", "insider_trading", "management"],
             )
 
             db_ak, db_yf = await asyncio.gather(ak_task, yf_task)
@@ -1041,22 +1157,16 @@ class FundamentalCollector(BaseCollector):
         for b in ["profile", "estimates", "share_stats"]:
             pack.fundamentals[b] = db[b][0] if db.get(b) else None
         
-        # 无差别存储分红、拆股和内部交易历史（只要 db 里有，就装入）
-        pack.fundamentals["dividends_history"] = None
-        pack.fundamentals["splits_history"] = None
-        pack.fundamentals["insider_trading_history"] = None
-        pack.fundamentals["management_history"] = None
-        pack.fundamentals["management_discussion_analysis_history"] = None
-        if db.get("dividends"):
-            pack.fundamentals["dividends_history"] = db["dividends"]
-        if db.get("splits"):
-            pack.fundamentals["splits_history"] = db["splits"]
-        if db.get("insider_trading"):
-            pack.fundamentals["insider_trading_history"] = db["insider_trading"]
-        if db.get("management"):
-            pack.fundamentals["management_history"] = db["management"]
-        if db.get("management_discussion_analysis"):
-            pack.fundamentals["management_discussion_analysis_history"] = db["management_discussion_analysis"]
+        # 无差别存储各类资产数据（只要 db 里有，就装入）
+        # 移除了已废弃的 management_discussion_analysis
+        pack.fundamentals["dividends_history"] = db.get("dividends")
+        pack.fundamentals["splits_history"] = db.get("splits")
+        pack.fundamentals["insider_trading_history"] = db.get("insider_trading")
+        pack.fundamentals["management_history"] = db.get("management")
+        
+        # 🌟 补上漏掉的 major_holders 和 earnings_cal
+        pack.fundamentals["major_holders"] = db.get("major_holders")
+        pack.fundamentals["earnings_calendar"] = db.get("earnings_cal")
 
         q_inc, a_inc = db.get("q_income", []), db.get("a_income", [])
         latest_is = q_inc[0] if q_inc else (a_inc[0] if a_inc else None)
@@ -1220,44 +1330,3 @@ class FundamentalCollector(BaseCollector):
             }
         )
         return ComponentOutput(success=True, payload=pack)
-
-    async def _fetch_with_fallback(
-        self, symbol: str, func: Callable, 
-        providers: Optional[List[str]] = None,  # 新增：允许传入 providers 列表
-        **kwargs
-    ) -> Any:
-        if providers is None:
-            providers = [self.provider]  # 默认只用配置的 provider
-        for provider in providers:
-            success, result = await self._execute_obb_call(
-                symbol, provider, func, **kwargs
-            )
-            if success:
-                return result
-        return None
-
-    async def _execute_obb_call(
-        self, symbol: str, provider: str, func: Callable, **kwargs
-    ) -> Tuple[bool, Any]:
-        api_key = (
-            get_api_key(provider)
-            if provider in ["polygon", "fmp", "alpha_vantage"]
-            else None
-        )
-        try:
-            if api_key:
-                os.environ[f"{provider.upper()}_API_KEY"] = api_key
-            res = await asyncio.to_thread(
-                func, symbol=symbol, provider=provider, **kwargs
-            )
-            if kwargs.get("is_series"):
-                return True, [
-                    (it.model_dump() if hasattr(it, "model_dump") else it.dict())
-                    for it in res.results
-                ]
-            return True, res.to_df() if hasattr(res, "to_df") else res
-        except Exception as e:
-            print(f"  [OBBFetcher] Error calling {func.__name__} with provider={provider}: {e}")
-            return False, None
-        except:
-            return False, None
