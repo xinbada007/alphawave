@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from datetime import datetime
 
-
 # ==========================================
 # 1. 市场类型枚举
 # ==========================================
@@ -206,11 +205,34 @@ MARKET_FIELD_CHAINS: Dict[str, List[str]] = {
 
 
 # ==========================================
-# 4. 合并的完整 FIELD_CHAINS (向后兼容)
+# 4. 分红/拆股字段映射 (Dividend & Splits Fields)
+# ==========================================
+DIVIDEND_FIELD_CHAINS: Dict[str, List[str]] = {
+    # 港股分红字段 (AkShare - stock_hk_dividend_payout_em)
+    "EX_DIVIDEND_DATE": ["除净日", "ex_dividend_date"],
+    "DIVIDEND_PLAN": ["分红方案", "dividend_plan"],
+    "ANNOUNCE_DATE": ["最新公告日期", "announce_date"],
+    "PAYMENT_DATE": ["发放日", "payment_date"],
+    "FISCAL_YEAR": ["财政年度", "fiscal_year"],
+    "RECORD_DATE": ["截至过户日", "record_date"],
+    "DIVIDEND_TYPE": ["分配类型", "dividend_type"],
+    
+    # 港股拆股字段 (如有)
+    "SPLIT_DATE": ["拆股日期", "split_date"],
+    "SPLIT_RATIO": ["拆股比例", "split_ratio", "ratio"],
+    
+    # 美股分红字段 (OpenBB)
+    "DIVIDEND_AMOUNT": ["amount", "dividend_amount"],
+    "EX_DATE": ["ex_dividend_date", "ex_date"],
+}
+
+# ==========================================
+# 5. 合并的完整 FIELD_CHAINS (向后兼容)
 # ==========================================
 FIELD_CHAINS: Dict[str, List[str]] = {
     **FINANCIAL_FIELD_CHAINS,
     **MARKET_FIELD_CHAINS,
+    **DIVIDEND_FIELD_CHAINS,
 }
 
 
@@ -290,28 +312,3 @@ def get_field_value(item: Optional[Dict], field_alias: str, field_chains: Option
     return None
 
 
-def get_fcf_raw(item: Optional[Dict]) -> Optional[float]:
-    """
-    物理推导自由现金流 (FCF = OCF - |CAPEX|)
-    
-    Args:
-        item: 现金流量表记录
-    
-    Returns:
-        FCF 值，未找到返回 None
-    """
-    if not item:
-        return None
-    
-    # 先尝试直接获取 FCF
-    f = get_field_value(item, "FCF")
-    if f is not None:
-        return f
-    
-    # 如果没有，尝试通过 OCF - CAPEX 计算
-    o = get_field_value(item, "OCF")
-    c = get_field_value(item, "CAPEX")
-    if o is not None and c is not None:
-        return o - abs(c)
-    
-    return None
