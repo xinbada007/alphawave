@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import akshare as ak  # type: ignore
 from openbb import obb
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from alphaflow.core.base import BaseCollector
 from alphaflow.core.schema import (
@@ -21,6 +22,26 @@ from alphaflow.core.data_utils import (
     get_market_type, 
     MarketType
 )
+
+# ==========================================
+# 0. 全局并发控制与重试机制
+# ==========================================
+
+# 全局 AkShare 防并发风暴锁（行情接口通常比财报接口宽容，可设为 5）
+AKSHARE_SEMAPHORE = asyncio.Semaphore(5)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=False
+)
+async def _safe_akshare_call(func: Callable, *args, **kwargs) -> Any:
+    """
+    安全的 AkShare 调用封装：加锁 + 重试
+    """
+    async with AKSHARE_SEMAPHORE:
+        return await asyncio.to_thread(func, *args, **kwargs)
 
 # ==========================================
 # 1. Fetcher 策略接口与实现
@@ -141,16 +162,34 @@ class MetricsFetcher:
         return metrics
 
     @staticmethod
-    async def fetch_from_akshare(symbol: str) -> Dict[str, Any]:
-        """从 AkShare 获取市场指标"""
+    async def fetch_from_akshare(symbol: str, market_type: MarketType = MarketType.HK) -> Dict[str, Any]:
+        """
+        从 AkShare 获取市场指标
+        
+        Args:
+            symbol: 股票代码 (如 "00700.HK", "600519.SH")
+            market_type: 市场类型，用于路由到正确的 AkShare 接口
+        
+        Note:
+            A股(CN)没有 AkShare 财务指标接口，会直接返回空字典走 fallback
+        """
+        # A股没有 AkShare 财务指标接口，直接返回空字典让系统走 fallback
+        if market_type == MarketType.CN:
+            print(f"  [MetricsFetcher/AkShare] CN market has no indicator API, skipping...")
+            return {}
+        
         try:
-            code = symbol.split(".")[0].zfill(5)
-            m_df = await asyncio.to_thread(
-                ak.stock_hk_financial_indicator_em, 
-                symbol=code
+            # 港股: 需要 5 位数字格式
+            code = symbol.split(".")[0]
+            ak_symbol = code.zfill(5)
+            
+            # 港股指标接口
+            m_df = await _safe_akshare_call(
+                ak.stock_hk_financial_indicator_em,
+                symbol=ak_symbol
             )
             
-            if m_df.empty:
+            if m_df is None or (hasattr(m_df, 'empty') and m_df.empty):
                 return {}
             
             r = {str(k).strip(): v for k, v in m_df.iloc[0].to_dict().items()}
@@ -161,6 +200,7 @@ class MetricsFetcher:
             # 保留原始数据
             metrics["raw_akshare"] = r
             metrics["_source"] = "akshare"
+            metrics["_market_type"] = market_type.value
             return metrics
             
         except Exception as e:
@@ -203,35 +243,60 @@ class PriceFetcher:
 
 
 class AkSharePriceFetcher(PriceFetcher):
-    """港股/A股专用的 AkShare 抓取器"""
+    """
+    港股/A股专用的 AkShare 抓取器
+    接受 market_type 参数以动态切换接口
+    """
+    
+    def __init__(self, market_type: MarketType = MarketType.HK):
+        self.market_type = market_type
 
     async def fetch(self, symbol: str, days: int) -> pd.DataFrame:
-        # 提取 5 位港股代码
-        code = symbol.split(".")[0].zfill(5)
+        # 根据市场类型构建代码格式
+        code = symbol.split(".")[0]
+        if self.market_type == MarketType.CN:
+            # A股: 只需要纯数字代码 (如 "000001", "600519")，不需要前缀
+            ak_symbol = code
+        else:
+            # 港股: 需要 5 位数字格式
+            ak_symbol = code.zfill(5)
+        
         # 预估回溯天数 (考虑非交易日，放大倍数)
         start_date = (datetime.now() - pd.Timedelta(days=int(days * 1.8))).strftime(
             "%Y%m%d"
         )
 
         try:
-            # 抓取日频复权数据 (qfq=前复权，确保价格连续性)
-            df = await asyncio.to_thread(
-                ak.stock_hk_hist,
-                symbol=code,
-                period="daily",
-                start_date=start_date,
-                adjust="qfq",
-            )
+            # 根据市场类型调用不同的 AkShare 接口
+            if self.market_type == MarketType.CN:
+                # A股行情接口 (symbol 只需要纯数字)
+                df = await _safe_akshare_call(
+                    ak.stock_zh_a_hist,
+                    symbol=ak_symbol,
+                    period="daily",
+                    start_date=start_date,
+                    adjust="qfq"
+                )
+            else:
+                # 港股行情接口
+                df = await _safe_akshare_call(
+                    ak.stock_hk_hist,
+                    symbol=ak_symbol,
+                    period="daily",
+                    start_date=start_date,
+                    adjust="qfq",
+                )
 
-            if df.empty:
+            if df is None or df.empty:
                 return pd.DataFrame()
             
-             # 如果存在“日期”列，先去重，保留最后一条（通常是最新的）
+            # 如果存在"日期"列，先去重，保留最后一条（通常是最新的）
             if "日期" in df.columns:
                 df = df.drop_duplicates(subset=["日期"], keep='last')
 
             # --- 深度榨干：全量字段标准化映射 ---
             # 将中文业务字段映射为英文，方便下游 Processor (如 Technicals) 使用
+            # 港股和 A股的字段名基本相同，共用同一个映射
             rename_map = {
                 "日期": "date",
                 "开盘": "open",
@@ -250,7 +315,7 @@ class AkSharePriceFetcher(PriceFetcher):
             # --- 数据清洗与类型强制 ---
             df["date"] = pd.to_datetime(df["date"])
             df.set_index("date", inplace=True)
-            # 修正建议：强制排序，防止 API 返回乱序数据
+            # 强制排序，防止 API 返回乱序数据
             df.sort_index(ascending=True, inplace=True) 
 
             # 确保核心列存在且为数值
@@ -387,9 +452,13 @@ class MarketDataCollector(BaseCollector):
         # 2. 路由策略定义
         market_type = get_market_type(symbol)
         fetchers: List[PriceFetcher] = []
+        
         if market_type == MarketType.HK:
             # 港股：首选 AkShare
-            fetchers = [AkSharePriceFetcher(), OpenBBPriceFetcher("yfinance")]
+            fetchers = [AkSharePriceFetcher(MarketType.HK), OpenBBPriceFetcher("yfinance")]
+        elif market_type == MarketType.CN:
+            # A股：首选 AkShare (必须！OpenBB 抓 A 股极其不稳定)
+            fetchers = [AkSharePriceFetcher(MarketType.CN), OpenBBPriceFetcher("yfinance")]
         else:
             # 美股/其他：根据配置顺序尝试
             fetchers = [
@@ -414,8 +483,6 @@ class MarketDataCollector(BaseCollector):
             # 截取目标长度 (Tail)
             price_df = price_df.sort_index(ascending=True)
             final_df = price_df.tail(target_days)
-            # 按日期倒序排列（最新在前），与其他数据保持一致
-            final_df = final_df.sort_index(ascending=False)        
                 
             pack.market_data = DataFrameModel.from_df(final_df)
 
@@ -455,10 +522,17 @@ class MarketDataCollector(BaseCollector):
         
         if market_type == MarketType.HK:
             # 港股：用 AkShare
-            metrics = await MetricsFetcher.fetch_from_akshare(symbol)
+            metrics = await MetricsFetcher.fetch_from_akshare(symbol, MarketType.HK)
             if metrics:
                 return metrics
             # Fallback: 尝试 OpenBB
+            return await MetricsFetcher.fetch_from_openbb(symbol, "yfinance")
+        elif market_type == MarketType.CN:
+            # A股：用 AkShare (必须！OpenBB 抓 A 股极其不稳定)
+            metrics = await MetricsFetcher.fetch_from_akshare(symbol, MarketType.CN)
+            if metrics:
+                return metrics
+            # Fallback: 尝试 OpenBB (yfinance)
             return await MetricsFetcher.fetch_from_openbb(symbol, "yfinance")
         else:
             # 美股：用 OpenBB

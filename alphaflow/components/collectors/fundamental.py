@@ -207,7 +207,12 @@ def audit_currency_context(
         "alignment_factor": 1.0,
         "detected_gap": "NONE",
         "audit_method": "None",
-        "warning_message": "Currency aligned or insufficient data to audit."
+        "warning_message": "Currency aligned or insufficient data to audit.",
+        "llm_instruction": (
+            "Note: The current market cap has been adjusted using the REAL-TIME spot FX rate. "
+            "However, historical financial figures are left in their original reporting currency. "
+            "Do NOT apply the current FX rate to analyze historical (e.g. 2-year or 3-year) growth rates."
+        )
     }
 
     if not metrics:
@@ -904,6 +909,9 @@ class OBBFetcher(BaseFetcher):
         return result
 
 class AkShareFetcher(BaseFetcher):
+    # 类级别并发控制：严格限制为2，防止触发AkShare免费API的WAF防护
+    _semaphore = asyncio.Semaphore(2)
+    
     def __init__(self, parent):
         self.parent = parent
 
@@ -913,105 +921,110 @@ class AkShareFetcher(BaseFetcher):
         code = symbol.split(".")[0].zfill(5)
 
         async def fetch_rep(tbl: str, p_type: str, lim: int):
-            try:
-                df = await asyncio.to_thread(
-                    ak.stock_financial_hk_report_em,
-                    stock=code,
-                    symbol=tbl,
-                    indicator=p_type,
-                )
-                if df.empty:
-                    return []
-                
-                # ===== 提取元数据 (DATE_TYPE_CODE, START_DATE) =====
-                meta_dict = {}
-                meta_cols = [c for c in ["DATE_TYPE_CODE", "START_DATE"] if c in df.columns]
-                if meta_cols:
-                    meta_df = df[["REPORT_DATE"] + meta_cols].drop_duplicates()
-                    meta_dict = meta_df.set_index("REPORT_DATE").to_dict("index")
-                
-                tdf = (
-                    df.pivot_table(
-                        index="REPORT_DATE",
-                        columns="STD_ITEM_NAME",
-                        values="AMOUNT",
-                        aggfunc="first",  # type: ignore[arg-type]
+            async with AkShareFetcher._semaphore:
+                try:
+                    df = await asyncio.to_thread(
+                        ak.stock_financial_hk_report_em,
+                        stock=code,
+                        symbol=tbl,
+                        indicator=p_type,
                     )
-                    .sort_index(ascending=False)
-                    .head(lim)
-                )
-                
-                # ===== 将元数据拼回 tdf =====
-                for col_name in meta_cols:
-                    if meta_dict:
-                        sample_value = next(iter(meta_dict.values()), {})
-                        if col_name in sample_value:
-                            tdf[col_name] = tdf.index.to_series().map(
-                                lambda x: meta_dict.get(x, {}).get(col_name)
-                            )
-                
-                tdf.index = pd.to_datetime(tdf.index).strftime("%Y-%m-%d")
-                tdf.index.name = "period_ending"
-                return tdf.reset_index().to_dict(orient="records")
-            except:
-                return []
+                    if df.empty:
+                        return []
+                    
+                    # ===== 提取元数据 (DATE_TYPE_CODE, START_DATE) =====
+                    meta_dict = {}
+                    meta_cols = [c for c in ["DATE_TYPE_CODE", "START_DATE"] if c in df.columns]
+                    if meta_cols:
+                        meta_df = df[["REPORT_DATE"] + meta_cols].drop_duplicates()
+                        meta_dict = meta_df.set_index("REPORT_DATE").to_dict("index")
+                    
+                    tdf = (
+                        df.pivot_table(
+                            index="REPORT_DATE",
+                            columns="STD_ITEM_NAME",
+                            values="AMOUNT",
+                            aggfunc="first",  # type: ignore[arg-type]
+                        )
+                        .sort_index(ascending=False)
+                        .head(lim)
+                    )
+                    
+                    # ===== 将元数据拼回 tdf =====
+                    for col_name in meta_cols:
+                        if meta_dict:
+                            sample_value = next(iter(meta_dict.values()), {})
+                            if col_name in sample_value:
+                                tdf[col_name] = tdf.index.to_series().map(
+                                    lambda x: meta_dict.get(x, {}).get(col_name)
+                                )
+                    
+                    tdf.index = pd.to_datetime(tdf.index).strftime("%Y-%m-%d")
+                    tdf.index.name = "period_ending"
+                    return tdf.reset_index().to_dict(orient="records")
+                except Exception as e:
+                    print(f"  [AkShareFetcher] fetch_rep({tbl}) failed: {e}")
+                    return []
 
         async def fetch_ana(p_type: str, lim: int):
-            try:
-                df = await asyncio.to_thread(
-                    ak.stock_financial_hk_analysis_indicator_em,
-                    symbol=code,
-                    indicator=p_type,
-                )
-                if df.empty:
+            async with AkShareFetcher._semaphore:
+                try:
+                    df = await asyncio.to_thread(
+                        ak.stock_financial_hk_analysis_indicator_em,
+                        symbol=code,
+                        indicator=p_type,
+                    )
+                    if df.empty:
+                        return []
+                    df = df.sort_values("REPORT_DATE", ascending=False).head(lim)
+                    df["period_ending"] = pd.to_datetime(df["REPORT_DATE"]).dt.strftime(
+                        "%Y-%m-%d"
+                    )
+                    return df.to_dict(orient="records")
+                except Exception as e:
+                    print(f"  [AkShareFetcher] fetch_ana({p_type}) failed: {e}")
                     return []
-                df = df.sort_values("REPORT_DATE", ascending=False).head(lim)
-                df["period_ending"] = pd.to_datetime(df["REPORT_DATE"]).dt.strftime(
-                    "%Y-%m-%d"
-                )
-                return df.to_dict(orient="records")
-            except:
-                return []
 
         # 🌟 新增：专门抓取港股分红派息的内部函数
         async def fetch_hk_dividends():
-            try:
-                df = await asyncio.to_thread(
-                    ak.stock_hk_dividend_payout_em,
-                    symbol=code
-                )
-                if df.empty:
+            async with AkShareFetcher._semaphore:
+                try:
+                    df = await asyncio.to_thread(
+                        ak.stock_hk_dividend_payout_em,
+                        symbol=code
+                    )
+                    if df.empty:
+                        return []
+                    
+                    # 字段标准化：将中文列名映射为标准英文 Key
+                    # 使用 DIVIDEND_FIELD_CHAINS 进行映射
+                    rename_map = {}
+                    for std_key, aliases in DIVIDEND_FIELD_CHAINS.items():
+                        # 找到中文列名
+                        for alias in aliases:
+                            if alias in df.columns:
+                                rename_map[alias] = std_key.lower()
+                                break
+                    
+                    df = df.rename(columns=rename_map)
+                    
+                    # 统一日期格式为 YYYY-MM-DD
+                    date_cols = ["ex_dividend_date", "announce_date", "payment_date"]
+                    for col in date_cols:
+                        if col in df.columns:
+                            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("N/A")
+                    
+                    # 填充空值
+                    df = df.fillna("N/A")
+                    
+                    # 按日期倒序排列（最新在前），与三表保持一致
+                    if "ex_dividend_date" in df.columns:
+                        df = df.sort_values("ex_dividend_date", ascending=False)
+                    
+                    return df.to_dict(orient="records")
+                except Exception as e:
+                    print(f"  [AkShareFetcher] fetch_hk_dividends failed: {e}")
                     return []
-                
-                # 字段标准化：将中文列名映射为标准英文 Key
-                # 使用 DIVIDEND_FIELD_CHAINS 进行映射
-                rename_map = {}
-                for std_key, aliases in DIVIDEND_FIELD_CHAINS.items():
-                    # 找到中文列名
-                    for alias in aliases:
-                        if alias in df.columns:
-                            rename_map[alias] = std_key.lower()
-                            break
-                
-                df = df.rename(columns=rename_map)
-                
-                # 统一日期格式为 YYYY-MM-DD
-                date_cols = ["ex_dividend_date", "announce_date", "payment_date"]
-                for col in date_cols:
-                    if col in df.columns:
-                        df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d").fillna("N/A")
-                
-                # 填充空值
-                df = df.fillna("N/A")
-                
-                # 按日期倒序排列（最新在前），与三表保持一致
-                if "ex_dividend_date" in df.columns:
-                    df = df.sort_values("ex_dividend_date", ascending=False)
-                
-                return df.to_dict(orient="records")
-            except Exception as e:
-                print(f"  [AkShareFetcher] Failed to fetch HK dividends for {symbol}: {e}")
-                return []
 
         # 🌟 所有任务并行执行（包含港股分红）
         res = await asyncio.gather(
@@ -1093,20 +1106,7 @@ class FundamentalCollector(BaseCollector):
         if pack is None:
             pack = ResearchPack(symbol=context.symbols[0])
         symbol = pack.symbol
-        target_days = context.metadata.get("days")
         print(f"  [Fundamental] Auditing {symbol} with slice-stitch TTM...")
-
-        latest_price = None
-        if pack.market_data:
-            try:
-                # 从 DataFrameModel 转回 DataFrame，取最后一行 Close
-                df_price = pack.market_data.to_df()
-                if not df_price.empty and "close" in df_price.columns:
-                    latest_price = df_price.iloc[-1]["close"]
-            except Exception as e:
-                print(
-                    f"  [Fundamental] Warning: Failed to extract price from market_data: {e}"
-                )
 
         market_type = get_market_type(symbol)
         is_cum = market_type in (MarketType.HK, MarketType.CN)
