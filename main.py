@@ -76,6 +76,7 @@ async def main():
         pipeline.add_step(
             MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
         ).add_step(FundamentalCollector("CoreDataFetcher"))
+        .add_step(TechnicalProcessor("FeatureProcessor"))
         # pipeline.add_step(
         #     FundamentalCollector("CoreDataFetcher")
         # ).add_step(  # 维度 1: 股价 + 经营面 (核心金融数据)

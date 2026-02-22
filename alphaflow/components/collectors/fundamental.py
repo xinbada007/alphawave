@@ -17,21 +17,18 @@ from alphaflow.core.data_utils import (
     DIVIDEND_FIELD_CHAINS,
     find_closest_strictly,
     get_field_value,
-    get_fcf_raw,
     get_market_type,
     MarketType,
+)
+from alphaflow.core.financial_math import (
+    calc_ttm_stitch,
+    get_fcf_raw,
 )
 from alphaflow.utils.api_rotator import get_api_key
 
 # 全局绕过 Mypy 检查
 obb_any: Any = obb
 
-# ==========================================
-# 1. 本地别名（向后兼容）
-# ==========================================
-# 使用共享模块的函数，本地保留别名以保持兼容性
-_get_num = get_field_value
-_get_fcf_raw = get_fcf_raw
 
 # ==========================================
 # 1.1 分红、拆股与大股东数据获取辅助函数
@@ -338,348 +335,6 @@ def audit_currency_context(
 
     return audit_report
 
-# ==========================================
-# 2. TTM 计算工具函数 (模块级)
-# ==========================================
-def calc_ttm_stitch(
-    q_series: List[Dict], 
-    a_series: List[Dict], 
-    field_func: Callable, 
-    is_cumulative: bool
-) -> Optional[float]:
-    """
-    健壮的 TTM 计算 (支持任意年结日、支持离散/累积混合)
-    """
-    if not q_series:
-        return None
-
-    # 1. 获取当前报告期 (Latest Period)
-    cur_item = q_series[0]
-    cur_val = field_func(cur_item)
-    if cur_val is None:
-        return None
-
-    cur_date_raw = cur_item.get("period_ending")
-    if not cur_date_raw:
-        return None
-    cur_date = pd.to_datetime(cur_date_raw)
-
-    # =================================================
-    # 场景 A: 离散制 (Discrete) - 如美股 (yfinance)
-    # 逻辑: 严格寻找过去连续的4个季度 (Q, Q-1, Q-2, Q-3)
-    # =================================================
-    if not is_cumulative:
-        total_val = cur_val
-        found_quarters = 1
-        
-        # 遍历后续数据寻找前3个季度
-        # 要求: 日期必须大概相差 3, 6, 9 个月
-        expected_dates = [
-            cur_date - pd.DateOffset(months=3),
-            cur_date - pd.DateOffset(months=6),
-            cur_date - pd.DateOffset(months=9)
-        ]
-        
-        for exp_date in expected_dates:
-            # 在 q_series 里找最接近 exp_date 的报告 (容差15天)
-            match = find_closest_strictly(q_series[1:], exp_date, window=20)
-            if match:
-                v = field_func(match)
-                if v is not None:
-                    total_val += v
-                    found_quarters += 1
-        
-        # 必须凑齐4个季度才算 TTM，否则数据缺失
-        if found_quarters == 4:
-            return total_val
-        return None
-
-    # =================================================
-    # 场景 B: 累积制 (Cumulative) - 如A股/港股 (AkShare)
-    # 公式: TTM = Current_YTD + (Last_Annual - Last_Year_Same_Period_YTD)
-    # =================================================
-    
-    # 1. 寻找 "上一份年报" (Last Annual)
-    last_annual_item = None
-    for item in a_series:
-        d_raw = item.get("period_ending")
-        if not d_raw: continue
-        d = pd.to_datetime(d_raw)
-        if d < cur_date:
-            last_annual_item = item
-            break
-            
-    if not last_annual_item:
-        return None
-
-    last_annual_val = field_func(last_annual_item)
-    if last_annual_val is None:
-        return None
-
-    # 2. 寻找 "去年同期" (Last Year Same Period)
-    target_date = cur_date - pd.DateOffset(years=1)
-    pool = q_series + a_series
-    last_same_period_item = find_closest_strictly(pool, target_date, window=15)
-    
-    if not last_same_period_item:
-        if (cur_date - pd.to_datetime(last_annual_item["period_ending"])).days < 30:
-            return cur_val
-        return None
-
-    last_same_period_val = field_func(last_same_period_item)
-    if last_same_period_val is None:
-        return None
-
-    # 3. 执行 TTM 拼接公式
-    return cur_val + (last_annual_val - last_same_period_val)
-
-
-# ==========================================
-# 2.1 年化乘数计算函数 (模块级)
-# ==========================================
-def get_annual_multiplier(
-    latest_is: Dict[str, Any],
-    latest_ana: Optional[Dict[str, Any]],
-    p_type: str,
-    is_cumulative: bool
-) -> Optional[float]:
-    """
-    智能推断年化乘数（支持离散制、累积制、非自然年结日）
-    
-    核心原则：数据有就有，没有就没有，绝对不硬算
-    
-    返回值：
-    - 精确计算成功 -> 返回年化乘数 (如 4.0, 2.0, 1.333...)
-    - 无法计算 -> 返回 None
-    """
-    # 年度报告：不需要年化
-    if p_type == "annual":
-        return 1.0
-    
-    # 离散制（美股/yfinance）：季度永远是 3 个月，精确已知
-    if not is_cumulative:
-        return 4.0
-
-    # ==================== 累积制（A股/港股）====================
-    # 必须是精确计算，任何一步失败则返回 None
-    
-    # 优先级 1: DATE_TYPE_CODE (最可靠)
-    # 001=年报12月, 002=半年报6月, 003=一季报3月, 004=三季报9月
-    date_type = latest_is.get("DATE_TYPE_CODE") or (latest_ana or {}).get("DATE_TYPE_CODE")
-    if date_type:
-        if date_type == "003": return 12.0 / 3   # Q1
-        if date_type == "002": return 12.0 / 6   # H1
-        if date_type == "004": return 12.0 / 9   # Q3
-        if date_type == "001": return 1.0         # 年度
-        # 未知的 DATE_TYPE_CODE -> 无法计算
-        return None
-
-    # 优先级 2: START_DATE 物理天数计算 (对非自然年结日最有效)
-    s_raw = latest_is.get("START_DATE")
-    e_raw = latest_is.get("REPORT_DATE") or latest_is.get("period_ending")
-    if s_raw and e_raw:
-        try:
-            s_date = pd.to_datetime(s_raw)
-            e_date = pd.to_datetime(e_raw)
-            days = (e_date - s_date).days
-            
-            # 防御：天数必须在合理范围 (30天 ~ 550天)
-            if 30 <= days <= 400:
-                months = round(days / 30.0)
-                if months > 0:
-                    return 12.0 / months
-        except Exception:
-            pass
-    # START_DATE 缺失或计算失败 -> 无法计算
-    
-    # 无法精确计算 -> 返回 None（不硬算）
-    return None
-
-
-# ==========================================
-# 3. 计算引擎层 (切片拼接法 TTM + 严密年化)
-# ==========================================
-class FinancialCalculator:
-    """负责跨市场通用指标计算，支持累积制 TTM 拼接"""
-
-    @staticmethod
-    def derive_indicators(
-        latest_is,
-        cur_bs,
-        cur_cf,
-        a_income,
-        q_income,
-        a_cash,
-        q_cash,
-        p_type,
-        m_cap,
-        latest_ana=None,
-        latest_annual_ana=None,
-        is_cumulative=False,
-        ttm_values=None,
-        metrics=None,
-        currency_ctx=None,
-    ) -> Dict[str, Any]:
-        indicators = {}
-
-        # 1. 物理对比助手 (去年同期)
-        def _calc_yoy_physical(
-            series: List[Dict], field: str, is_quarterly: bool
-        ) -> Optional[float]:
-            if len(series) < 2:
-                return None
-            cur_val = _get_num(series[0], field)
-            if cur_val is None:
-                return None
-            cur_date_raw = series[0].get("period_ending")
-            if cur_date_raw is None:
-                return None
-            cur_date = pd.to_datetime(cur_date_raw)
-            if not cur_date:
-                return None
-            target_year = cur_date.year - 1
-            for prev in series[1:]:
-                prev_date_raw = prev.get("period_ending")
-                if prev_date_raw is None:
-                    continue
-                prev_date = pd.to_datetime(prev_date_raw)
-                if not prev_date:
-                    continue
-                match = prev_date.year == target_year
-                if is_quarterly:
-                    match = match and (prev_date.month == cur_date.month)
-                if match:
-                    prev_val = _get_num(prev, field)
-                    if prev_val and abs(prev_val) > 0:
-                        return round((cur_val - prev_val) / abs(prev_val), 4)
-            return None
-
-
-        # --- A. 季度增长 ---
-        if p_type == "quarterly":
-            y_r_q = latest_ana.get("OPERATE_INCOME_YOY") if latest_ana else None
-            indicators["rev_growth_yoy_quarter"] = (
-                round(float(y_r_q) / 100, 4)
-                if y_r_q is not None
-                else _calc_yoy_physical(q_income, "REV", True)
-            )
-            y_ni_q = latest_ana.get("HOLDER_PROFIT_YOY") if latest_ana else None
-            indicators["ni_growth_yoy_quarter"] = (
-                round(float(y_ni_q) / 100, 4)
-                if y_ni_q is not None
-                else _calc_yoy_physical(q_income, "NI", True)
-            )
-
-        # --- B. 年度增长 ---
-        y_r_a = (
-            latest_annual_ana.get("OPERATE_INCOME_YOY") if latest_annual_ana else None
-        )
-        indicators["rev_growth_yoy_annual"] = (
-            round(float(y_r_a) / 100, 4)
-            if y_r_a is not None
-            else _calc_yoy_physical(a_income, "REV", False)
-        )
-        y_ni_a = (
-            latest_annual_ana.get("HOLDER_PROFIT_YOY") if latest_annual_ana else None
-        )
-        indicators["ni_growth_yoy_annual"] = (
-            round(float(y_ni_a) / 100, 4)
-            if y_ni_a is not None
-            else _calc_yoy_physical(a_income, "NI", False)
-        )
-
-        # --- C. 效率与回报 (年化) ---
-        rev, ni = _get_num(latest_is, "REV"), _get_num(latest_is, "NI")
-        eq, liab = _get_num(cur_bs, "EQUITY"), _get_num(cur_bs, "LIAB")
-        ocf, oi = _get_num(cur_cf, "OCF"), _get_num(latest_is, "OI")
-        fcf_cur = _get_fcf_raw(cur_cf)
-
-        # 使用智能年化乘数计算函数（数据有就有，没有就不硬算）
-        ann_multiplier = get_annual_multiplier(latest_is, latest_ana, p_type, is_cumulative)
-
-        # ROE 计算（遵循不硬算原则）
-        roe_off = (
-            latest_ana.get("ROE_YEARLY") or latest_ana.get("ROE_AVG")
-            if latest_ana
-            else None
-        )
-        if roe_off is not None:
-            val = float(roe_off) / 100
-            # 只有在能获取到精确年化乘数时才进行年化
-            if latest_ana and not latest_ana.get("ROE_YEARLY") and is_cumulative and ann_multiplier is not None:
-                val = val * ann_multiplier
-            indicators["roe_period_actual"] = round(val, 4)
-        elif ni and eq and eq > 0 and ann_multiplier is not None:
-            # 只有在能获取到精确年化乘数时才计算 ROE
-            indicators["roe_period_actual"] = round((ni * ann_multiplier) / eq, 4)
-        else:
-            # 无法计算时返回 None（不硬算）
-            indicators["roe_period_actual"] = None
-
-        # Margin
-        npm_off = latest_ana.get("NET_PROFIT_RATIO") if latest_ana else None
-        indicators["net_margin_period_actual"] = (
-            round(float(npm_off) / 100, 4)
-            if npm_off is not None
-            else (round(ni / rev, 4) if ni and rev and rev > 0 else None)
-        )
-        indicators["op_margin_period_actual"] = (
-            round(oi / rev, 4) if oi and rev and rev > 0 else None
-        )
-        if fcf_cur is not None and rev and rev > 0:
-            indicators["fcf_margin_period_actual"] = round(fcf_cur / rev, 4)
-
-        # --- D. 杠杆与流动性 ---
-        if eq and eq > 0 and liab is not None:
-            indicators["total_liabilities_to_equity"] = round(liab / eq, 4)
-        cr_off = latest_ana.get("CURRENT_RATIO") if latest_ana else None
-        if cr_off is not None:
-            indicators["current_ratio_liquidity"] = round(float(cr_off), 4)
-        else:
-            ca, cl = _get_num(cur_bs, "C_ASSETS"), _get_num(cur_bs, "C_LIAB")
-            indicators["current_ratio_liquidity"] = (
-                round(ca / cl, 4) if ca and cl and cl > 0 else None
-            )
-        if ni and abs(ni) > 0 and ocf is not None:
-            indicators["earnings_quality_period"] = round(ocf / ni, 4)
-
-        # --- E. 实时估值 (TTM 平滑) ---
-        # 使用内部函数 _calculate_fcf_yield（严格遵循审计结果）
-        if m_cap and m_cap > 0:
-            # 优先使用外部传入的 ttm_values
-            if ttm_values and metrics and currency_ctx:
-                # 内部函数：使用已转换的 m_cap
-                def _calculate_fcf_yield(ttm_fcf, ttm_ni, metrics, currency_ctx, m_cap):
-                    if ttm_fcf is None:
-                        return None
-                    method = currency_ctx.get("audit_method", "")
-                    
-                    # 路径 A: PE 降维
-                    if "PE_Collision" in method:
-                        api_pe = metrics.get('trailingPE') or metrics.get('pe_ratio')
-                        if api_pe and api_pe > 0 and ttm_ni and ttm_ni > 0:
-                            return (ttm_fcf / ttm_ni) / api_pe
-                    
-                    # 路径 B: 使用已转换的 m_cap
-                    if m_cap and m_cap > 0 :
-                        return (ttm_fcf / m_cap)
-                    
-                    return None
-                
-                fcf_yield = _calculate_fcf_yield(
-                    ttm_fcf=ttm_values.get("fcf"),
-                    ttm_ni=ttm_values.get("net_income"),
-                    metrics=metrics,
-                    currency_ctx=currency_ctx,
-                    m_cap=m_cap
-                )
-                if fcf_yield is not None:
-                    indicators["fcf_yield_realtime_ttm"] = round(fcf_yield, 4)
-                    
-        return indicators
-
-
-# ==========================================
 # 3. 抓取层实现
 # ==========================================
 class BaseFetcher:
@@ -1040,7 +695,7 @@ class AkShareFetcher(BaseFetcher):
         )
         
         # metrics 已移至 market_data.py 获取，此处不再重复获取
-        profile, shares = [], None
+        profile = []
         try:
             # 这里原本获取 metrics 的逻辑已移除，保留 profile 和 shares 获取
             p_df, c_df = (
@@ -1197,41 +852,27 @@ class FundamentalCollector(BaseCollector):
                 }
             )
 
-            # 计算引擎：执行切片拼接 TTM 逻辑
-            analysis_pool = db.get(
-                "q_analysis" if p_type == "quarterly" else "a_analysis", []
-            )
-            latest_ana = find_closest_strictly(analysis_pool, anchor_date)
-            if latest_ana:
-                print(
-                    f"  [Alignment] Matched analysis indicators for date: {latest_ana.get('period_ending')}"
-                )
-            else:
-                anchor_date_str = anchor_date.strftime('%Y-%m-%d') if anchor_date else "N/A"
-                print(
-                    f"  [Alignment] Warning: No matching indicators found for {anchor_date_str}"
-                )
             # 从 market_metrics 获取 MCAP（由 market_data.py 提供）
-            mcap_input = _get_num(pack.market_metrics, "MCAP")
+            mcap_input = get_field_value(pack.market_metrics, "MCAP")
             
             # ===== 币种错配审计 =====
             # 步骤 1: 计算 TTM 财务数据
             ttm_ni = calc_ttm_stitch(
                 q_inc, a_inc,
-                lambda x: _get_num(x, "NI"),
+                lambda x: get_field_value(x, "NI"),
                 is_cum
             )
             ttm_rev = calc_ttm_stitch(
                 q_inc, a_inc,
-                lambda x: _get_num(x, "REV"),
+                lambda x: get_field_value(x, "REV"),
                 is_cum
             )
             ttm_fcf = calc_ttm_stitch(
                 db.get("q_cash", []), db.get("a_cash", []),
-                _get_fcf_raw,
+                get_fcf_raw,
                 is_cum
             )
-            equity = _get_num(cur_bs, "EQUITY") if cur_bs else None
+            equity = get_field_value(cur_bs, "EQUITY") if cur_bs else None
             
             ttm_values = {
                 "net_income": ttm_ni,
@@ -1240,14 +881,7 @@ class FundamentalCollector(BaseCollector):
                 "total_equity": equity
             }
             
-            # 步骤 2: 根据市场类型获取汇率
-            fx_rate = None
-            if market_type == MarketType.HK:
-                fx_rate = await get_fx_rate("HKD", "CNY")
-            elif market_type == MarketType.US:
-                fx_rate = await get_fx_rate("USD", "CNY")
-            
-            # 步骤 3: 调用 audit_currency_context (传入 ttm_values 作为 ttm_financials)
+            # 步骤 2: 调用 audit_currency_context (传入 ttm_values 作为 ttm_financials)
             currency_ctx = audit_currency_context(pack.market_metrics or {}, ttm_values, market_type)
             pack.fundamentals["currency_context"] = currency_ctx
             print(f"  [Currency] Audit: {currency_ctx.get('detected_gap')}, Factor: {currency_ctx.get('alignment_factor')}")
@@ -1270,44 +904,6 @@ class FundamentalCollector(BaseCollector):
                         pack.market_metrics["market_cap_rmb"] = mcap_input
                         pack.market_metrics["fx_rate"] = fx_rate
 
-            q_ana_pool = db.get("q_analysis", [])
-            a_ana_pool = db.get("a_analysis", [])
-            # 当前周期指标：动态根据 p_type 选池，并与 anchor_date 严格对齐
-            current_ana_pool = q_ana_pool if p_type == "quarterly" else a_ana_pool
-            latest_ana = find_closest_strictly(current_ana_pool, anchor_date)
-            # 年度对比指标：固定从 a_ana_pool 选，并与 anchor_date 对齐
-            latest_annual_ana = find_closest_strictly(a_ana_pool, anchor_date)
-            if latest_ana:
-                print(
-                    f"  [Alignment] Matched indicators for: {latest_ana.get('period_ending')}"
-                )
-
-            indicators = FinancialCalculator.derive_indicators(
-                latest_is,
-                cur_bs,
-                cur_cf,
-                a_inc,
-                q_inc,
-                db.get("a_cash", []),
-                db.get("q_cash", []),
-                p_type,
-                mcap_input,
-                latest_ana,
-                latest_annual_ana,
-                is_cumulative=is_cum,
-                ttm_values=ttm_values,
-                metrics=pack.market_metrics or {},
-                currency_ctx=currency_ctx,
-            )
-            indicators.update(
-                {
-                    "report_period": p_type,
-                    "fiscal_date": anchor_date.strftime("%Y-%m-%d")
-                    if anchor_date
-                    else "N/A",
-                }
-            )
-            pack.fundamentals["indicators"] = indicators
 
         if pack.fundamentals.get("profile"):
             pack.name = pack.fundamentals["profile"].get("name")

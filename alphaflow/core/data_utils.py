@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from datetime import datetime
 
-
 # ==========================================
 # 1. 市场类型枚举
 # ==========================================
@@ -313,28 +312,3 @@ def get_field_value(item: Optional[Dict], field_alias: str, field_chains: Option
     return None
 
 
-def get_fcf_raw(item: Optional[Dict]) -> Optional[float]:
-    """
-    物理推导自由现金流 (FCF = OCF - |CAPEX|)
-    
-    Args:
-        item: 现金流量表记录
-    
-    Returns:
-        FCF 值，未找到返回 None
-    """
-    if not item:
-        return None
-    
-    # 先尝试直接获取 FCF
-    f = get_field_value(item, "FCF")
-    if f is not None:
-        return f
-    
-    # 如果没有，尝试通过 OCF - CAPEX 计算
-    o = get_field_value(item, "OCF")
-    c = get_field_value(item, "CAPEX")
-    if o is not None and c is not None:
-        return o - abs(c)
-    
-    return None
