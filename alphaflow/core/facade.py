@@ -23,6 +23,8 @@ import pandas as pd
 
 from alphaflow.core.data_utils import (
     MarketType,
+    MetaKey,
+    ReportPeriod,
     find_closest_strictly,
     get_field_value,
     get_market_type,
@@ -117,9 +119,9 @@ class ResearchPackFacade:
         
         # 处理 ANALYSIS 类型 (AkShare 特有)
         if stmt_type == StatementType.ANALYSIS:
-            if period == "annual":
-                return self._analysis_series.get("annual", [])
-            elif period == "quarterly":
+            if period == ReportPeriod.ANNUAL.value:
+                return self._analysis_series.get(ReportPeriod.ANNUAL.value, [])
+            elif period == ReportPeriod.QUARTERLY.value:
                 # 根据累积/离散选择不同的 key
                 key = "quarterly_cumulative_ytd" if self.is_cumulative else "quarterly_discrete"
                 return self._analysis_series.get(key, [])
@@ -128,12 +130,12 @@ class ResearchPackFacade:
         # 处理三表 (income/balance/cash)
         stmt_key = self.STMT_KEY_MAP[stmt_type]
         
-        if period == "annual":
+        if period == ReportPeriod.ANNUAL.value:
             # annual_series: {"a_income": [...], "a_balance": [...], "a_cash": [...]}
             key = f"a_{stmt_key}"
             return self._annual_series.get(key, [])
         
-        elif period == "quarterly":
+        elif period == ReportPeriod.QUARTERLY.value:
             # quarterly_series: {"q_income_ytd": [...], "q_balance_discrete": [...], ...}
             key = f"q_{stmt_key}{self._q_suffix}"
             return self._quarterly_series.get(key, [])
@@ -176,14 +178,14 @@ class ResearchPackFacade:
         Returns:
             字段值 (float)，未找到返回 None
         """
-        if period == "latest":
+        if period == ReportPeriod.LATEST.value:
             # 1. 尝试从季报获取
-            q_report = self.get_latest_report("quarterly", stmt_type)
+            q_report = self.get_latest_report(ReportPeriod.QUARTERLY.value, stmt_type)
             val = get_field_value(q_report, field) if q_report else None
             
             # 2. 如果季报没值 (None)，回退到年报
             if val is None:
-                a_report = self.get_latest_report("annual", stmt_type)
+                a_report = self.get_latest_report(ReportPeriod.ANNUAL.value, stmt_type)
                 val = get_field_value(a_report, field) if a_report else None
             
             return val
@@ -249,36 +251,32 @@ class ResearchPackFacade:
     # 时间对齐与基准获取接口 (Time-Aligned API)
     # ======================================
     
+    # alphaflow/core/facade.py
     def get_baseline_context(self) -> Tuple[str, Optional[datetime], Optional[Dict]]:
         """
-        获取当前财报的基准上下文 (通常由最新利润表决定)
-        
-        Returns:
-            (p_type, anchor_date, latest_is_report)
-            - p_type: "quarterly" 或 "annual"
-            - anchor_date: 统一对齐所用的时间戳
-            - latest_is_report: 最新的利润表原始字典
+        获取基准上下文 (严格按照日期最新原则)
         """
-        latest_is = self.get_latest_report("quarterly", StatementType.INCOME)
-        p_type = "quarterly"
-        if not latest_is:
-            latest_is = self.get_latest_report("annual", StatementType.INCOME)
-            p_type = "annual"
-            
-        if not latest_is:
-            return "annual", None, None
-            
-        date_str = latest_is.get("period_ending")
-        anchor_date = pd.to_datetime(date_str) if date_str else None
+        q_is = self.get_latest_report(ReportPeriod.QUARTERLY.value, StatementType.INCOME)
+        a_is = self.get_latest_report(ReportPeriod.ANNUAL.value, StatementType.INCOME)
         
-        return p_type, anchor_date, latest_is
+        q_date = pd.to_datetime(q_is.get(MetaKey.PERIOD_ENDING)) if q_is and q_is.get(MetaKey.PERIOD_ENDING) else pd.Timestamp.min
+        a_date = pd.to_datetime(a_is.get(MetaKey.PERIOD_ENDING)) if a_is and a_is.get(MetaKey.PERIOD_ENDING) else pd.Timestamp.min
+
+        if q_date is pd.Timestamp.min and a_date is pd.Timestamp.min:
+            return ReportPeriod.ANNUAL.value, None, None
+
+        # 如果同一天 (例如美股 Q4 季报和年报同时出在 12-31)，优先使用年报，因为年报经过审计，数据更准
+        if a_date >= q_date:
+            return ReportPeriod.ANNUAL.value, a_date, a_is
+        else:
+            return ReportPeriod.QUARTERLY.value, q_date, q_is
 
     def get_aligned_report(
         self, 
         period: str, 
         stmt_type: StatementType, 
         anchor_date: Optional[datetime], 
-        window: int = 15
+        window: int = 20
     ) -> Optional[Dict]:
         """
         根据锚点日期，严格获取在时间上对齐的特定报表
@@ -296,7 +294,7 @@ class ResearchPackFacade:
         stmt_type: StatementType, 
         period: str, 
         anchor_date: Optional[datetime],
-        window: int = 15
+        window: int = 20
     ) -> Optional[float]:
         """直接获取在时间上对齐的某个特定字段的值"""
         report = self.get_aligned_report(period, stmt_type, anchor_date, window)

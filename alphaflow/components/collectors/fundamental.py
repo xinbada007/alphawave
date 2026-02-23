@@ -543,10 +543,21 @@ class OBBFetcher(BaseFetcher):
                     
                     if hasattr(obb_any.equity.fundamental, stmt_key):
                         func = getattr(obb_any.equity.fundamental, stmt_key)
-                        return name, await self._exec_obb_task(
+                        # 获取原始数据
+                        raw_data = await self._exec_obb_task(
                             func, symbol, name, 
                             period=period, limit=limit
                         )
+                        
+                        # 🌟 新增：为每条记录添加统一的 report_type 字段
+                        # 兼容后续可能的多 Provider (如 OpenBB, FMP 等)
+                        decorated_data = []
+                        for record in raw_data:
+                            if isinstance(record, dict):
+                                record["report_type"] = period  # "annual" 或 "quarterly"
+                            decorated_data.append(record)
+                        
+                        return name, decorated_data
                 
             return name, []
 

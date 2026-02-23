@@ -15,7 +15,13 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 import pandas as pd
 
-from alphaflow.core.data_utils import find_closest_strictly, get_field_value
+from alphaflow.core.data_utils import (
+    MetaKey,
+    ReportPeriod,
+    find_closest_strictly, 
+    get_field_value,
+    detect_report_type,
+)
 
 
 # ==========================================
@@ -52,7 +58,7 @@ def calc_ttm_stitch(
     if cur_val is None:
         return None
 
-    cur_date_raw = cur_item.get("period_ending")
+    cur_date_raw = cur_item.get(MetaKey.PERIOD_ENDING)
     if not cur_date_raw:
         return None
     cur_date = pd.to_datetime(cur_date_raw)
@@ -74,8 +80,8 @@ def calc_ttm_stitch(
         ]
         
         for exp_date in expected_dates:
-            # 在 q_series 里找最接近 exp_date 的报告 (容差15天)
-            # 注意: 传入 window=20 (原逻辑是20天窗口)
+            # 在 q_series 里找最接近 exp_date 的报告
+            # 注意: 传入 window=20
             match = find_closest_strictly(q_series[1:], exp_date, window=20)
             if match:
                 v = field_func(match)
@@ -96,7 +102,7 @@ def calc_ttm_stitch(
     # 1. 寻找 "上一份年报" (Last Annual)
     last_annual_item = None
     for item in a_series:
-        d_raw = item.get("period_ending")
+        d_raw = item.get(MetaKey.PERIOD_ENDING)
         if not d_raw: continue
         d = pd.to_datetime(d_raw)
         if d < cur_date:
@@ -113,10 +119,14 @@ def calc_ttm_stitch(
     # 2. 寻找 "去年同期" (Last Year Same Period)
     target_date = cur_date - pd.DateOffset(years=1)
     pool = q_series + a_series
-    last_same_period_item = find_closest_strictly(pool, target_date, window=15)
+    last_same_period_item = find_closest_strictly(pool, target_date, window=20)
     
     if not last_same_period_item:
-        if (cur_date - pd.to_datetime(last_annual_item["period_ending"])).days < 30:
+        # 🌟 修复：强校验 cur_val 必须是年报级别才能直接返回
+        cur_type = detect_report_type(cur_item)
+        is_annual_data = cur_type == ReportPeriod.ANNUAL
+        
+        if is_annual_data:
             return cur_val
         return None
 
@@ -158,7 +168,7 @@ def get_annual_multiplier(
       - 兜底: 物理天数计算 (12.0 / 月份数)
     """
     # 年度报告：不需要年化
-    if p_type == "annual":
+    if p_type == ReportPeriod.ANNUAL.value:
         return 1.0
     
     # 离散制：精确已知
@@ -168,7 +178,7 @@ def get_annual_multiplier(
     # ==================== 累积制 ====================
     
     # 优先级 1: DATE_TYPE_CODE
-    date_type = latest_is.get("DATE_TYPE_CODE") or (latest_ana or {}).get("DATE_TYPE_CODE")
+    date_type = latest_is.get(MetaKey.DATE_TYPE_CODE) or (latest_ana or {}).get(MetaKey.DATE_TYPE_CODE)
     if date_type:
         if date_type == "003": return 12.0 / 3   # Q1
         if date_type == "002": return 12.0 / 6   # H1
@@ -176,8 +186,8 @@ def get_annual_multiplier(
         if date_type == "001": return 1.0        # 年度
     
     # 优先级 2: START_DATE 物理天数计算
-    s_raw = latest_is.get("START_DATE")
-    e_raw = latest_is.get("REPORT_DATE") or latest_is.get("period_ending")
+    s_raw = latest_is.get(MetaKey.START_DATE)
+    e_raw = latest_is.get(MetaKey.REPORT_DATE) or latest_is.get(MetaKey.PERIOD_ENDING)
     if s_raw and e_raw:
         try:
             s_date = pd.to_datetime(s_raw)
@@ -226,7 +236,7 @@ def calculate_growth_yoy(
         return None
     
     cur_val = get_field_value_func(series[0], field)
-    cur_date_raw = series[0].get("period_ending")
+    cur_date_raw = series[0].get(MetaKey.PERIOD_ENDING)
     
     if cur_val is None or not cur_date_raw:
         return None
@@ -235,7 +245,7 @@ def calculate_growth_yoy(
     target_year = cur_date.year - 1
     
     for prev in series[1:]:
-        prev_date_raw = prev.get("period_ending")
+        prev_date_raw = prev.get(MetaKey.PERIOD_ENDING)
         if not prev_date_raw:
             continue
         
@@ -248,8 +258,8 @@ def calculate_growth_yoy(
         
         if match:
             prev_val = get_field_value_func(prev, field)
-            if prev_val and abs(prev_val) > 0:
-                return round((cur_val - prev_val) / abs(prev_val), 4)
+            if prev_val and prev_val > 0:
+                return round((cur_val - prev_val) / prev_val, 4)
     
     return None
 
