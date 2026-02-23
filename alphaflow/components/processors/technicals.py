@@ -11,6 +11,9 @@ from datetime import datetime
 from alphaflow.core.base import BaseProcessor
 from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack
 from alphaflow.core.data_utils import (
+    FinKey,
+    MetaKey,
+    ReportPeriod,
     get_field_value,
 )
 from alphaflow.core.facade import ResearchPackFacade, StatementType
@@ -30,154 +33,288 @@ class FeatureAnalyzer(Protocol):
         ...
 
 # ==========================================
-# 2. 财务比率计算引擎 (LegacyFinancialRatioAnalyzer)
+# 2. 财务比率计算引擎 (CoreFinancialRatioAnalyzer)
 # ==========================================
-class LegacyFinancialRatioAnalyzer:
+class CoreFinancialRatioAnalyzer:
     """
-    基础财务比率分析器
-    复用 facade 和 financial_math 模块进行语义化数据访问和计算。
+    核心财务比率分析器 (Standardized Financial Ratio Analyzer)
+    
+    架构原则:
+    1. Orchestrator Pattern: analyze() 负责数据对齐与调度，不含计算逻辑。
+    2. Dimension Separation: 增长/效率/偿债/估值 拆分为独立方法。
+    3. Explicit Naming: 变量名严格对应计算口径 (TTM vs Period Actual)。
     """
 
     def analyze(self, pack: ResearchPack) -> Dict[str, Any]:
-        """执行核心指标计算 (终极解耦、无硬编码版)"""
+        """调度器：准备数据并分发计算任务"""
         if not pack.fundamentals or not pack.extra:
             return {}
 
         facade = ResearchPackFacade(pack)
         
-        # 1. 获取基准时空锚点 (一句话搞定 p_type, anchor_date, latest_is)
+        # 1. 基础时空锚点
         p_type, anchor_date, latest_is = facade.get_baseline_context()
         if not latest_is or not anchor_date:
             return {}
 
-        # 2. 获取严格时间对齐的报表 (一句话搞定 find_closest_strictly)
-        cur_bs = facade.get_aligned_report(p_type, StatementType.BALANCE, anchor_date)
-        cur_cf = facade.get_aligned_report(p_type, StatementType.CASH, anchor_date)
+        # 2. 报表对齐 (Window=20 for Financials, Window=30 for Analysis/Metrics)
+        cur_bs = facade.get_aligned_report(p_type, StatementType.BALANCE, anchor_date, window=20)
+        cur_cf = facade.get_aligned_report(p_type, StatementType.CASH, anchor_date, window=20)
         
-        latest_ana = facade.get_aligned_report(p_type, StatementType.ANALYSIS, anchor_date)
-        latest_annual_ana = facade.get_aligned_report("annual", StatementType.ANALYSIS, anchor_date)
+        latest_ana = facade.get_aligned_report(p_type, StatementType.ANALYSIS, anchor_date, window=30)
+        latest_annual_ana = facade.get_aligned_report(ReportPeriod.ANNUAL.value, StatementType.ANALYSIS, anchor_date, window=30)
 
-        # 3. 上下文准备 (一句话阻断对 pack 的裸调)
-        metrics = facade.market_metrics
-        m_cap = metrics.get("market_cap_rmb", get_field_value(metrics, "MCAP"))
-        currency_ctx = facade.currency_context
-
-        # 4. TTM 计算
-        ttm_ni = facade.get_ttm_value(lambda x: get_field_value(x, "NI"), StatementType.INCOME)
-        ttm_fcf = facade.get_ttm_value(get_fcf_raw, StatementType.CASH)
-        
-        # 5. 提取核心标量 (依赖对齐后的报表)
-        rev = get_field_value(latest_is, "REV")
-        ni = get_field_value(latest_is, "NI")
-        oi = get_field_value(latest_is, "OI")
-        eq = get_field_value(cur_bs, "EQUITY")
-        liab = get_field_value(cur_bs, "LIAB")
-        ocf = get_field_value(cur_cf, "OCF")
-        fcf_cur = get_fcf_raw(cur_cf)
-        
+        # 3. 准备计算所需的中间变量 (Context)
+        # 年化乘数
         ann_multiplier = get_annual_multiplier(latest_is, latest_ana or {}, p_type, facade.is_cumulative)
+        
+        # TTM 核心数据 (用于效率和估值)
+        ttm_ni = facade.get_ttm_value(lambda x: get_field_value(x, FinKey.NI), StatementType.INCOME)
+        ttm_fcf = facade.get_ttm_value(get_fcf_raw, StatementType.CASH)
 
-        # ==========================================
-        # 核心指标计算逻辑
-        # ==========================================
+        # 4. 执行分模块计算
         indicators = {}
+        
+        # A. 增长维度 (Growth)
+        indicators.update(self._calc_growth_metrics(
+            facade, latest_ana, latest_annual_ana, p_type, anchor_date
+        ))
 
-        # --- A. 增长指标 ---
-        if p_type == "quarterly":
-            y_r_q = latest_ana.get("OPERATE_INCOME_YOY") if latest_ana else None
-            # 逻辑还原：calculate_growth_yoy 必须传入具体的 series 列表
-            indicators["rev_growth_yoy_quarter"] = (
+        # B. 效率与回报维度 (Efficiency)
+        indicators.update(self._calc_efficiency_metrics(
+            latest_is, cur_bs, cur_cf, latest_ana, 
+            ttm_ni, ann_multiplier, facade.is_cumulative
+        ))
+
+        # C. 偿债与流动性维度 (Solvency)
+        indicators.update(self._calc_solvency_metrics(
+            latest_is, cur_bs, cur_cf, latest_ana
+        ))
+
+        # D. 估值维度 (Valuation)
+        indicators.update(self._calc_valuation_metrics(
+            facade, ttm_fcf, ttm_ni
+        ))
+
+        # E. 元数据注入
+        indicators["report_period"] = p_type
+        indicators["fiscal_date"] = anchor_date.strftime("%Y-%m-%d")
+
+        # F. 过滤 None 值，避免 LLM JSON Payload 污染
+        return {k: v for k, v in indicators.items() if v is not None}
+
+    # ==========================================
+    # 私有计算方法 (Private Calculation Methods)
+    # ==========================================
+
+    def _calc_growth_metrics(
+        self, 
+        facade: ResearchPackFacade, 
+        latest_ana: Optional[Dict], 
+        latest_annual_ana: Optional[Dict], 
+        p_type: str,
+        anchor_date: Optional[datetime]
+    ) -> Dict[str, Any]:
+        """计算增长率 (Growth) - 支持动态时态对齐与 Q4 动量捕获"""
+        res = {}
+        
+        # ==================================================
+        # 1. 季度/中期增长 (Quarterly YoY)
+        # ==================================================
+        # 检查系统最新的季报是否与当前基准日期(年报)处于同一时期
+        latest_q_is = facade.get_latest_report(ReportPeriod.QUARTERLY.value, StatementType.INCOME)
+        q_date_raw = latest_q_is.get(MetaKey.PERIOD_ENDING) if latest_q_is else None
+        q_date = pd.to_datetime(q_date_raw) if q_date_raw else None
+        
+        is_q_aligned = False
+        if p_type == ReportPeriod.QUARTERLY.value:
+            is_q_aligned = True  # 锚点本身就是季报，天然放行
+        elif p_type == ReportPeriod.ANNUAL.value and q_date and anchor_date:
+            # 核心业务逻辑升级：如果当前在看年报，但系统里有新鲜的 Q4 数据 (相差不到30天)，予以放行！
+            # 这挽救了美股和优质 A/港股的 Q4 Exit-Velocity 动量指标。
+            if abs((q_date - anchor_date).days) <= 30:
+                is_q_aligned = True
+                
+        if is_q_aligned:
+            # 获取严格对齐的季度分析指标 (若 p_type=annual，latest_ana 是年报指标，必须重新取季度指标)
+            q_ana = facade.get_aligned_report(ReportPeriod.QUARTERLY.value, StatementType.ANALYSIS, q_date, window=30)
+            
+            y_r_q = get_field_value(q_ana, FinKey.ANA_REV_YOY) if q_ana else None
+            res["rev_growth_yoy_quarter"] = (
                 round(float(y_r_q) / 100, 4) if y_r_q is not None 
                 else calculate_growth_yoy(
-                    facade.get_scoped_series("quarterly", StatementType.INCOME),
-                    "REV", True, get_field_value
+                    facade.get_scoped_series(ReportPeriod.QUARTERLY.value, StatementType.INCOME),
+                    FinKey.REV, True, get_field_value
                 )
             )
             
-            y_ni_q = latest_ana.get("HOLDER_PROFIT_YOY") if latest_ana else None
-            indicators["ni_growth_yoy_quarter"] = (
+            y_ni_q = get_field_value(q_ana, FinKey.ANA_NI_YOY) if q_ana else None
+            res["ni_growth_yoy_quarter"] = (
                 round(float(y_ni_q) / 100, 4) if y_ni_q is not None
                 else calculate_growth_yoy(
-                    facade.get_scoped_series("quarterly", StatementType.INCOME),
-                    "NI", True, get_field_value
+                    facade.get_scoped_series(ReportPeriod.QUARTERLY.value, StatementType.INCOME),
+                    FinKey.NI, True, get_field_value
                 )
             )
 
-        # 年度增长
-        y_r_a = latest_annual_ana.get("OPERATE_INCOME_YOY") if latest_annual_ana else None
-        indicators["rev_growth_yoy_annual"] = (
+        # ==================================================
+        # 2. 年度增长 (Annual YoY) - 长期视角，始终执行
+        # ==================================================
+        y_r_a = get_field_value(latest_annual_ana, FinKey.ANA_REV_YOY) if latest_annual_ana else None
+        res["rev_growth_yoy_annual"] = (
             round(float(y_r_a) / 100, 4) if y_r_a is not None
             else calculate_growth_yoy(
-                facade.get_scoped_series("annual", StatementType.INCOME),
-                "REV", False, get_field_value
+                facade.get_scoped_series(ReportPeriod.ANNUAL.value, StatementType.INCOME),
+                FinKey.REV, False, get_field_value
             )
         )
         
-        y_ni_a = latest_annual_ana.get("HOLDER_PROFIT_YOY") if latest_annual_ana else None
-        indicators["ni_growth_yoy_annual"] = (
+        y_ni_a = get_field_value(latest_annual_ana, FinKey.ANA_NI_YOY) if latest_annual_ana else None
+        res["ni_growth_yoy_annual"] = (
             round(float(y_ni_a) / 100, 4) if y_ni_a is not None
             else calculate_growth_yoy(
-                facade.get_scoped_series("annual", StatementType.INCOME),
-                "NI", False, get_field_value
+                facade.get_scoped_series(ReportPeriod.ANNUAL.value, StatementType.INCOME),
+                FinKey.NI, False, get_field_value
             )
         )
+        
+        return res
 
-        # --- B. 效率与回报 (年化) ---
-        # 🚨 关键修复：使用 p_type 锁定当前报表周期，严禁混用 quarterly/annual
-        # (核心标量已在第5步提取完毕)
+    def _calc_efficiency_metrics(
+        self,
+        latest_is: Dict,
+        cur_bs: Optional[Dict],
+        cur_cf: Optional[Dict],
+        latest_ana: Optional[Dict],
+        ttm_ni: Optional[float],
+        ann_multiplier: Optional[float],
+        is_cumulative: bool
+    ) -> Dict[str, Any]:
+        """计算效率与回报 (Efficiency) - 区分 TTM 与 当期年化"""
+        res = {}
+        
+        # 提取基础标量
+        rev = get_field_value(latest_is, FinKey.REV)
+        ni = get_field_value(latest_is, FinKey.NI)
+        oi = get_field_value(latest_is, FinKey.OI)
+        eq = get_field_value(cur_bs, FinKey.EQUITY)
+        fcf_cur = get_fcf_raw(cur_cf)
 
-        # ROE 逻辑 (完全一致)
-        roe_off = (latest_ana.get("ROE_YEARLY") or latest_ana.get("ROE_AVG")) if latest_ana else None
-        if roe_off is not None:
-            val = float(roe_off) / 100
-            if latest_ana and not latest_ana.get("ROE_YEARLY") and facade.is_cumulative and ann_multiplier is not None:
-                val = val * ann_multiplier
-            indicators["roe_period_actual"] = round(val, 4)
-        elif ni and eq and eq > 0 and ann_multiplier is not None:
-            indicators["roe_period_actual"] = round((ni * ann_multiplier) / eq, 4)
+        # --- 1. ROE (Return on Equity) ---
+        # Priority A: 成品 (API Actual)
+        roe_api = get_field_value(latest_ana, FinKey.ANA_ROE_ACTUAL) if latest_ana else None
+        if roe_api is not None:
+            res["roe_annual_yearly"] = round(float(roe_api) / 100, 4)
+        
+        # 负权益检查 (规则一：Equity <= 0 返回字符串)
+        if eq is not None and eq <= 0:
+            res["roe_status"] = "N/A (Negative Equity From Latest Report)"
         else:
-            indicators["roe_period_actual"] = None
+            # 1.1 ROE TTM (滚动12个月，平滑季节性，最推荐)
+            if ttm_ni is not None and eq is not None and eq > 0:
+                res["roe_annual_ttm"] = round(ttm_ni / eq, 4)
 
-        # Margin 逻辑 (完全一致)
-        npm_off = latest_ana.get("NET_PROFIT_RATIO") if latest_ana else None
-        indicators["net_margin_period_actual"] = (
-            round(float(npm_off) / 100, 4) if npm_off is not None 
-            else (round(ni / rev, 4) if ni and rev and rev > 0 else None)
+            # 1.2 ROE Period Actual (基于当期表现推演)
+            # 策略：成品(Actual) -> 半成品(Avg*M) -> 自算(NI*M/Eq)
+            # 一旦获取到高优先级的，就不再计算低优先级的，避免冗余
+            roe_period = None
+            # Priority B: 半成品 (API Avg * Multiplier) - 仅在累积制下尝试
+            if roe_period is None and latest_ana is not None and is_cumulative and ann_multiplier is not None:
+                roe_avg = get_field_value(latest_ana, FinKey.ANA_ROE_AVG)
+                if roe_avg is not None:
+                    roe_period = (float(roe_avg) / 100) * ann_multiplier
+
+            # Priority C: 自算 (NI * Multiplier / Equity)
+            if roe_period is None and ni is not None and eq is not None and eq > 0 and ann_multiplier is not None:
+                roe_period = (ni * ann_multiplier) / eq
+
+            if roe_period is not None:
+                res["roe_period_actual"] = round(roe_period, 4)
+
+        # --- 2. Margins (利润率) ---
+        # 优先使用 API 提供的 Net Margin (防止计算误差)
+        npm_api = get_field_value(latest_ana, FinKey.ANA_NET_MARGIN) if latest_ana else None
+        res["net_margin_period_actual"] = (
+            round(float(npm_api) / 100, 4) if npm_api is not None 
+            else (round(ni / rev, 4) if ni is not None and rev is not None and rev > 0 else None)
         )
-        indicators["op_margin_period_actual"] = round(oi / rev, 4) if oi and rev and rev > 0 else None
-        if fcf_cur is not None and rev and rev > 0:
-            indicators["fcf_margin_period_actual"] = round(fcf_cur / rev, 4)
-
-        # --- C. 杠杆与流动性 ---
-        if eq and eq > 0 and liab is not None:
-            indicators["total_liabilities_to_equity"] = round(liab / eq, 4)
         
-        cr_off = latest_ana.get("CURRENT_RATIO") if latest_ana else None
-        if cr_off is not None:
-            indicators["current_ratio_liquidity"] = round(float(cr_off), 4)
+        if oi is not None and rev is not None and rev > 0:
+            res["op_margin_period_actual"] = round(oi / rev, 4)
+            
+        if fcf_cur is not None and rev is not None and rev > 0:
+            res["fcf_margin_period_actual"] = round(fcf_cur / rev, 4)
+
+        return res
+
+    def _calc_solvency_metrics(
+        self,
+        latest_is: Dict,
+        cur_bs: Optional[Dict],
+        cur_cf: Optional[Dict],
+        latest_ana: Optional[Dict]
+    ) -> Dict[str, Any]:
+        """计算偿债与流动性 (Solvency)"""
+        res = {}
+        
+        eq = get_field_value(cur_bs, FinKey.EQUITY)
+        liab = get_field_value(cur_bs, FinKey.LIAB)
+        ni = get_field_value(latest_is, FinKey.NI)
+        ocf = get_field_value(cur_cf, FinKey.OCF)
+
+        # 负债权益比
+        if eq is not None and eq > 0 and liab is not None:
+            res["total_liabilities_to_equity"] = round(liab / eq, 4)
+        
+        # 流动比率 (优先 API)
+        cr_api = get_field_value(latest_ana, FinKey.ANA_CURRENT_RATIO) if latest_ana else None
+        if cr_api is not None:
+            res["current_ratio_liquidity"] = round(float(cr_api), 4)
         else:
-            ca = get_field_value(cur_bs, "C_ASSETS") if cur_bs else None
-            cl = get_field_value(cur_bs, "C_LIAB") if cur_bs else None
-            indicators["current_ratio_liquidity"] = round(ca / cl, 4) if ca and cl and cl > 0 else None
+            ca = get_field_value(cur_bs, FinKey.C_ASSETS)
+            cl = get_field_value(cur_bs, FinKey.C_LIAB)
+            if ca is not None and cl is not None and cl > 0:
+                res["current_ratio_liquidity"] = round(ca / cl, 4)
         
-        if ni and abs(ni) > 0 and ocf is not None:
-            indicators["earnings_quality_period"] = round(ocf / ni, 4)
+        # 盈利质量 (规则三：语义化标记)
+        # 若 NI > 0：计算 OCF / NI
+        # 若 NI <= 0 且 OCF > 0：必须返回字符串 "Positive OCF with Net Loss"
+        # 其他情况返回 None
+        if ni is not None and ni > 0 and ocf is not None:
+            res["earnings_quality_period"] = round(ocf / ni, 4)
+        elif ni is not None and ni <= 0 and ocf is not None and ocf > 0:
+            # 语义化标记：亏损但现金流为正
+            res["earnings_quality_period"] = "Positive OCF with Net Loss"
+            
+        return res
 
-        # --- D. 估值指标 ---
+    def _calc_valuation_metrics(
+        self,
+        facade: ResearchPackFacade,
+        ttm_fcf: Optional[float],
+        ttm_ni: Optional[float]
+    ) -> Dict[str, Any]:
+        """计算估值指标 (Valuation)"""
+        res = {}
+        
+        metrics = facade.market_metrics
+        m_cap = metrics.get("market_cap_rmb", get_field_value(metrics, FinKey.MCAP))
+        currency_ctx = facade.currency_context
+
+        # FCF Yield (规则四：包含币种碰撞逻辑)
         if m_cap and m_cap > 0 and ttm_fcf is not None:
             method = currency_ctx.get("audit_method", "")
+            
+            # 场景: 币种错配 (如港股 RMB 财报 vs HKD 市值) -> 借道 PE 消除汇率
             if "PE_Collision" in method:
                 api_pe = metrics.get('trailingPE') or metrics.get('pe_ratio')
                 if api_pe and api_pe > 0 and ttm_ni and ttm_ni > 0:
-                    indicators["fcf_yield_realtime_ttm"] = round((ttm_fcf / ttm_ni) / api_pe, 4)
+                    res["fcf_yield_realtime_ttm"] = round((ttm_fcf / ttm_ni) / api_pe, 4)
+            # 场景: 常规同币种 -> 直接除
             else:
-                indicators["fcf_yield_realtime_ttm"] = round((ttm_fcf / m_cap), 4)
-
-        # --- E. 元数据注入 ---
-        indicators["report_period"] = p_type
-        indicators["fiscal_date"] = anchor_date.strftime("%Y-%m-%d") if anchor_date else "N/A"
-
-        return indicators
+                res["fcf_yield_realtime_ttm"] = round((ttm_fcf / m_cap), 4)
+                
+        return res
 
 
 # ==========================================
@@ -193,7 +330,7 @@ class TechnicalProcessor(BaseProcessor):
         super().__init__(name, config)
         # 挂载分析器插件池
         self.analyzers: List[FeatureAnalyzer] = [
-            LegacyFinancialRatioAnalyzer(),
+            CoreFinancialRatioAnalyzer(),
         ]
 
     async def process(self, context: AnalysisContext, input_data: Any, **kwargs) -> ComponentOutput:
@@ -222,15 +359,15 @@ class TechnicalProcessor(BaseProcessor):
         if not hasattr(pack, "fundamentals") or pack.fundamentals is None:
             pack.fundamentals = {}
             
-        if "indicators_v2" not in pack.fundamentals:
-            pack.fundamentals["indicators_v2"] = {}
+        if "indicators" not in pack.fundamentals:
+            pack.fundamentals["indicators"] = {}
 
         # 4. 遍历所有挂载的分析器进行运算
         for analyzer in self.analyzers:
             try:
                 result = analyzer.analyze(pack)
                 if result:
-                    pack.fundamentals["indicators_v2"].update(result)
+                    pack.fundamentals["indicators"].update(result)
             except Exception as e:
                 print(f"  [TechnicalProcessor] {analyzer.__class__.__name__} Failed for {pack.symbol}: {e}")
 

@@ -19,6 +19,21 @@ from datetime import datetime
 # 1. 市场类型枚举
 # ==========================================
 
+class ReportPeriod(str, Enum):
+    """财报周期枚举 - 消除硬编码字符串"""
+    QUARTERLY = "quarterly"
+    ANNUAL = "annual"
+    LATEST = "latest"  # 通常用于 snapshot 兜底
+
+
+class MetaKey:
+    """系统元数据/日期字段常量"""
+    PERIOD_ENDING = "period_ending"  # 清洗后的统一会计期末日
+    REPORT_DATE = "REPORT_DATE"      # 原始发布日
+    START_DATE = "START_DATE"        # 报告起始日 (用于计算年化)
+    DATE_TYPE_CODE = "DATE_TYPE_CODE" # AkShare 报告类型码
+
+
 class MarketType(Enum):
     """市场类型枚举"""
     HK = "hk"      # 港股
@@ -52,7 +67,98 @@ def get_market_type(symbol: str) -> MarketType:
 
 
 # ==========================================
-# 2. 财务字段映射 (Financial Fields)
+# 2. 财务字段常量类 (Financial Key)
+# ==========================================
+class FinKey:
+    """
+    财务字段常量类 - 替代字符串字面量
+    用于替代 FIELD_CHAINS 中的 Key，提供类型安全性和 IDE 自动补全
+    """
+    
+    # ========== 利润表 (Income Statement) ==========
+    REV = "REV"
+    NI = "NI"
+    OI = "OI"
+    GP = "GP"
+    EBITDA = "EBITDA"
+    TAX = "TAX"
+    
+    # ========== 资产负债表 (Balance Sheet) ==========
+    ASSETS = "ASSETS"
+    LIAB = "LIAB"
+    EQUITY = "EQUITY"
+    C_ASSETS = "C_ASSETS"
+    C_LIAB = "C_LIAB"
+    CASH_AND_EQUIV = "CASH_AND_EQUIV"
+    INTANGIBLE = "INTANGIBLE"
+    GOODWILL = "GOODWILL"
+    
+    # ========== 现金流量表 (Cash Flow) ==========
+    OCF = "OCF"
+    ICF = "ICF"
+    FCF = "FCF"
+    CAPEX = "CAPEX"
+    
+    # ========== 效率与回报 (Efficiency & Returns) ==========
+    ROE = "ROE"
+    ROA = "ROA"
+    NET_MARGIN = "NET_MARGIN"
+    GROSS_MARGIN = "GROSS_MARGIN"
+    
+    # ========== 增长率 (Growth Ratios) ==========
+    REV_GROWTH_QOQ = "REV_GROWTH_QOQ"
+    NI_GROWTH_QOQ = "NI_GROWTH_QOQ"
+    REV_GROWTH_YOY = "REV_GROWTH_YOY"
+    NI_GROWTH_YOY = "NI_GROWTH_YOY"
+    
+    # ========== 市场字段 (Market Fields) ==========
+    MCAP = "MCAP"
+    MCAP_HK = "MCAP_HK"
+    PE = "PE"
+    PB = "PB"
+    PS = "PS"
+    PCF = "PCF"
+    DIVIDEND_YIELD = "DIVIDEND_YIELD"
+    
+    # ========== 每股指标 (Per Share Metrics) ==========
+    EPS = "EPS"
+    BPS = "BPS"
+    OCPS = "OCPS"
+    DPS = "DPS"
+    
+    # ========== 股本信息 (Share Information) ==========
+    SHARES = "SHARES"
+    LOT_SIZE = "LOT_SIZE"
+    PAYOUT_RATIO = "PAYOUT_RATIO"
+    SHARES_H = "SHARES_H"
+    AUTHORIZED_SHARES = "AUTHORIZED_SHARES"
+    
+    # ========== 分红/拆股字段 (Dividend & Splits Fields) ==========
+    EX_DIVIDEND_DATE = "EX_DIVIDEND_DATE"
+    DIVIDEND_PLAN = "DIVIDEND_PLAN"
+    ANNOUNCE_DATE = "ANNOUNCE_DATE"
+    PAYMENT_DATE = "PAYMENT_DATE"
+    FISCAL_YEAR = "FISCAL_YEAR"
+    RECORD_DATE = "RECORD_DATE"
+    DIVIDEND_TYPE = "DIVIDEND_TYPE"
+    SPLIT_DATE = "SPLIT_DATE"
+    SPLIT_RATIO = "SPLIT_RATIO"
+    DIVIDEND_AMOUNT = "DIVIDEND_AMOUNT"
+    EX_DATE = "EX_DATE"
+    
+    # --- 新增：第三方 API 预计算/分析指标 (Analysis) ---
+    # 统一增加 ANA_ 前缀，明确告知开发者这属于预计算指标，需做容错处理
+    # 拆分原因：ROE_YEARLY 是成品（已年化），ROE_AVG 是半成品（未年化），需分别处理
+    ANA_ROE_ACTUAL = "ANA_ROE_ACTUAL"  # 成品 - 已年化，如 ROE_YEARLY
+    ANA_ROE_AVG = "ANA_ROE_AVG"          # 半成品 - 未年化 YTD，如 ROE_AVG
+    ANA_NET_MARGIN = "ANA_NET_MARGIN"
+    ANA_CURRENT_RATIO = "ANA_CURRENT_RATIO"
+    ANA_REV_YOY = "ANA_REV_YOY"
+    ANA_NI_YOY = "ANA_NI_YOY"
+
+
+# ==========================================
+# 3. 财务字段映射 (Financial Fields)
 # ==========================================
 FINANCIAL_FIELD_CHAINS: Dict[str, List[str]] = {
     # 利润表 (Income Statement)
@@ -227,12 +333,53 @@ DIVIDEND_FIELD_CHAINS: Dict[str, List[str]] = {
 }
 
 # ==========================================
+# 新增：第三方分析/预计算指标字段映射 (Analysis Fields)
+# ==========================================
+ANALYSIS_FIELD_CHAINS: Dict[str, List[str]] = {
+    # 净资产收益率 (ROE) - 拆分原因：ROE_YEARLY 是成品，ROE_AVG 是半成品
+    # 成品 - 已年化
+    "ANA_ROE_ACTUAL": [
+        "ROE_YEARLY",                    # AkShare 已年化
+        "returnOnEquity", "roe"           # yfinance (通常 TTM)
+    ],
+    # 半成品 - 未年化 YTD
+    "ANA_ROE_AVG": [
+        "ROE_AVG"                        # AkShare 未年化
+    ],
+    
+    # 净利率 (Net Margin)
+    "ANA_NET_MARGIN": [
+        "NET_PROFIT_RATIO",               # AkShare (数据包中验证存在)
+        "profitMargins", "netProfitMargin", "netMargin" # yfinance
+    ],
+    
+    # 流动比率 (Current Ratio)
+    "ANA_CURRENT_RATIO": [
+        "CURRENT_RATIO",                  # AkShare (数据包中验证存在)
+        "currentRatio", "current_ratio"   # yfinance
+    ],
+    
+    # 营收同比增长 (Revenue YoY)
+    "ANA_REV_YOY": [
+        "OPERATE_INCOME_YOY",             # AkShare (数据包中验证存在)
+        "revenueGrowth"                   # yfinance
+    ],
+    
+    # 净利润同比增长 (Net Income YoY)
+    "ANA_NI_YOY": [
+        "HOLDER_PROFIT_YOY",              # AkShare (数据包中验证存在)
+        "earningsGrowth"                  # yfinance
+    ],
+}
+
+# ==========================================
 # 5. 合并的完整 FIELD_CHAINS (向后兼容)
 # ==========================================
 FIELD_CHAINS: Dict[str, List[str]] = {
     **FINANCIAL_FIELD_CHAINS,
     **MARKET_FIELD_CHAINS,
     **DIVIDEND_FIELD_CHAINS,
+    **ANALYSIS_FIELD_CHAINS,
 }
 
 
@@ -243,7 +390,7 @@ FIELD_CHAINS: Dict[str, List[str]] = {
 def find_closest_strictly(
     series: List[Dict], 
     anchor_date: Optional[datetime], 
-    window: int = 15
+    window: int = 20
 ) -> Optional[Dict]:
     """
     在数据序列中寻找与目标日期最接近的记录
@@ -263,7 +410,7 @@ def find_closest_strictly(
     min_diff = float('inf')
     
     for item in series:
-        d_raw = item.get("period_ending")
+        d_raw = item.get(MetaKey.PERIOD_ENDING)
         if not d_raw:
             continue
             
