@@ -307,7 +307,7 @@ class CoreFinancialRatioAnalyzer:
             
             # 场景: 币种错配 (如港股 RMB 财报 vs HKD 市值) -> 借道 PE 消除汇率
             if "PE_Collision" in method:
-                api_pe = metrics.get('trailingPE') or metrics.get('pe_ratio')
+                api_pe = get_field_value(metrics, FinKey.PE)
                 if api_pe and api_pe > 0 and ttm_ni and ttm_ni > 0:
                     res["fcf_yield_realtime_ttm"] = round((ttm_fcf / ttm_ni) / api_pe, 4)
             # 场景: 常规同币种 -> 直接除

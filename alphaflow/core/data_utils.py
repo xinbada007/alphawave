@@ -22,8 +22,28 @@ from datetime import datetime
 class ReportPeriod(str, Enum):
     """财报周期枚举 - 消除硬编码字符串"""
     QUARTERLY = "quarterly"
+    SEMIANNUAL = "semiannual"  # 半年报 (H1)
     ANNUAL = "annual"
     LATEST = "latest"  # 通常用于 snapshot 兜底
+
+
+# ==========================================
+# 报表类型映射 (统一数据源)
+# ==========================================
+
+# AkShare DATE_TYPE_CODE -> ReportPeriod 映射
+_AKSHARE_DATE_TYPE_MAP: Dict[str, ReportPeriod] = {
+    "001": ReportPeriod.ANNUAL,
+    "002": ReportPeriod.SEMIANNUAL,
+    "003": ReportPeriod.QUARTERLY,
+    "004": ReportPeriod.QUARTERLY,
+}
+
+# OBB report_type -> ReportPeriod 映射
+_OBB_REPORT_TYPE_MAP: Dict[str, ReportPeriod] = {
+    "annual": ReportPeriod.ANNUAL,
+    "quarter": ReportPeriod.QUARTERLY,
+}
 
 
 class MetaKey:
@@ -32,6 +52,7 @@ class MetaKey:
     REPORT_DATE = "REPORT_DATE"      # 原始发布日
     START_DATE = "START_DATE"        # 报告起始日 (用于计算年化)
     DATE_TYPE_CODE = "DATE_TYPE_CODE" # AkShare 报告类型码
+    REPORT_TYPE = "report_type"           # OBB 报告类型字段
 
 
 class MarketType(Enum):
@@ -431,6 +452,41 @@ def find_closest_strictly(
     return best_item
 
 
+def detect_report_type(item: Dict[str, Any]) -> Optional[ReportPeriod]:
+    """
+    判断报表类型 (兼容 AkShare 和 OBB)
+    
+    优先级:
+    1. DATE_TYPE_CODE (AkShare 的报告类型码)
+    2. report_type 字段 (OBB 添加的)
+    
+    Args:
+        item: 报表记录 Dict
+    
+    Returns:
+        ReportPeriod 枚举值，或 None (无法判断)
+    
+    注意: 
+    - 离散制(美股)的 "quarterly" = 单季数据
+    - 累积制(港股/A股)的 "quarterly" = YTD累计数据 (Q1/Q3)
+    下游使用时需根据 is_cumulative 自行判断如何处理
+    """
+    if not item:
+        return None
+    
+    # 优先级 1: DATE_TYPE_CODE (AkShare) - 使用映射字典
+    code = item.get(MetaKey.DATE_TYPE_CODE)
+    if code and code in _AKSHARE_DATE_TYPE_MAP:
+        return _AKSHARE_DATE_TYPE_MAP[code]
+    
+    # 优先级 2: report_type (OBB) - 使用映射字典
+    rt = item.get(MetaKey.REPORT_TYPE)
+    if rt and rt in _OBB_REPORT_TYPE_MAP:
+        return _OBB_REPORT_TYPE_MAP[rt]
+    
+    return None
+
+
 def get_field_value(item: Optional[Dict], field_alias: str, field_chains: Optional[Dict[str, List[str]]] = None) -> Optional[float]:
     """
     从记录中提取字段值，支持多别名映射
@@ -457,5 +513,3 @@ def get_field_value(item: Optional[Dict], field_alias: str, field_chains: Option
             except (ValueError, TypeError):
                 continue
     return None
-
-

@@ -20,6 +20,7 @@ from alphaflow.core.data_utils import (
     ReportPeriod,
     find_closest_strictly, 
     get_field_value,
+    detect_report_type,
 )
 
 
@@ -121,7 +122,11 @@ def calc_ttm_stitch(
     last_same_period_item = find_closest_strictly(pool, target_date, window=20)
     
     if not last_same_period_item:
-        if (cur_date - pd.to_datetime(last_annual_item.get(MetaKey.PERIOD_ENDING))).days < 30:
+        # 🌟 修复：强校验 cur_val 必须是年报级别才能直接返回
+        cur_type = detect_report_type(cur_item)
+        is_annual_data = cur_type == ReportPeriod.ANNUAL
+        
+        if is_annual_data:
             return cur_val
         return None
 
