@@ -3,6 +3,7 @@ import argparse
 import requests
 
 from alphaflow.components.collectors.market_data import MarketDataCollector
+from alphaflow.components.collectors.market_data.collector import MarketDataCollector as MarketDataCollectorV2
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
 from alphaflow.engine.pipeline import ResearchPipeline
@@ -75,7 +76,9 @@ async def main():
 
     (
         pipeline.add_step(
-            MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
+            # MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
+            MarketDataCollectorV2("MarketDataFetcher_新版")
+            
         )
         # .add_step(FundamentalCollector("CoreDataFetcher"))
         .add_step(FundamentalCollectorV2("CoreDataFetcher_新版")) 

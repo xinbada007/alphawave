@@ -1,14 +1,14 @@
-# Fetchers - 原子数据抓取层
-from .base import BaseFetcher
+"""
+Fetchers - 市场数据抓取器模块
+"""
+from .base import BaseMarketFetcher
 from .akshare_hk_fetcher import AkShareHKFetcher
 from .akshare_cn_fetcher import AkShareCNFetcher
 from .obb_fetcher import OBBFetcher
-from .yfinance_fetcher import YFinanceFetcher
 
 __all__ = [
-    "BaseFetcher",
-    "AkShareHKFetcher",
+    "BaseMarketFetcher",
+    "AkShareHKFetcher", 
     "AkShareCNFetcher",
     "OBBFetcher",
-    "YFinanceFetcher",
 ]

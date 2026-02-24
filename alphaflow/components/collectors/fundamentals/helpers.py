@@ -79,8 +79,8 @@ def audit_currency_context(
         "audit_method": "None",
         "warning_message": "Currency aligned or insufficient data to audit.",
         "llm_instruction": (
-            "If the currency is misaligned, a real-time fx_rate is given and because it is REALTIME FX rate"
-            "Do NOT apply the REALTIME FX rate to analyze historical (e.g. 2-year or 3-year) growth rates."
+            "If the currency is misaligned, a real-time fx_rate is given and because it is REALTIME FX rate. "
+            "Do NOT apply the REALTIME FX rate to analyze historical (e.g. 2-year or 3-year) growth rates. "
         )
     }
 
