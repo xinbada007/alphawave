@@ -23,7 +23,13 @@ class MultiTimeframeMarketAnalyzer:
     集成了: 趋势绩效、风险回撤、量价异常、形态缺口四大模块
     """
     
-    DEFAULT_TIMEFRAMES = {"short": 30, "medium": 60, "semi_long": 120, "long": 260}
+    DEFAULT_TIMEFRAMES = {
+    "short_term": 21,       # 黄金甜点 1：短期情绪与期权周期
+    "medium_term": 63,      # 黄金甜点 2：中期波段与财报周期
+    "semi_long_term": 126,  # 黄金甜点 3：半年趋势与宏观定价
+    "long_term": 252        # 黄金甜点 4：长期牛熊与 52 周极值
+}
+
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
@@ -160,11 +166,12 @@ class MultiTimeframeMarketAnalyzer:
         if gap_info:
             tags.add("[UNFILLED_GAP_DOWN]")
 
-        # 分层计算
-        short_res = self._calc_period_metrics(df, self.timeframes["short"], latest, tags)
-        med_res = self._calc_period_metrics(df, self.timeframes["medium"], latest, tags)
-        semi_long_res = self._calc_period_metrics(df, self.timeframes["semi_long"], latest, tags)
-        long_res = self._calc_period_metrics(df, self.timeframes["long"], latest, tags)
+        # 分层计算 - 传入明确的 tier_name 标识符
+        short_res = self._calc_period_metrics(df, self.timeframes["short"], "short", latest, tags)
+        med_res = self._calc_period_metrics(df, self.timeframes["medium"], "medium", latest, tags)
+        semi_long_res = self._calc_period_metrics(df, self.timeframes["semi_long"], "semi_long", latest, tags)
+        long_res = self._calc_period_metrics(df, self.timeframes["long"], "long", latest, tags)
+
         
         return {
             "technical_and_sentiment": {
@@ -174,20 +181,22 @@ class MultiTimeframeMarketAnalyzer:
                     "unfilled_gap_down": gap_info
                 },
                 "timeframes": {
-                    "short_term_1m": short_res,
-                    "medium_term_3m": med_res,
-                    "semi_long_term_6m": semi_long_res,
-                    "long_term_1y": long_res
+                    "short_term": short_res,
+                    "medium_term": med_res,
+                    "semi_long_term": semi_long_res,
+                    "long_term": long_res
                 },
+
                 "liquidity_and_volume": vol_data
             }
         }
 
-    def _calc_period_metrics(self, df: pd.DataFrame, period_days: int, latest: pd.Series, tags: set) -> Dict[str, Any]:
+    def _calc_period_metrics(self, df: pd.DataFrame, period_days: int, tier_name: str, latest: pd.Series, tags: set) -> Dict[str, Any]:
         """通用的区间指标提取工厂，结构化输出 Performance, Risk, Technicals"""
         df_slice = df.tail(period_days)
+        actual_days = len(df_slice)
         if df_slice.empty:
-            return {"period_trading_days": period_days}
+            return {"period_trading_days": actual_days}
 
         
         latest_close = self._safe_float(latest.get("close"), 0.0)
@@ -207,7 +216,7 @@ class MultiTimeframeMarketAnalyzer:
         
         # 3. 组装结果结构 (Nested JSON)
         result = {
-            "period_trading_days": period_days,
+            "period_trading_days": actual_days,
             "performance": {
                 "return_pct": round(ret_pct, 2),
                 "annualized_volatility_pct": round(volatility, 2),
@@ -218,8 +227,8 @@ class MultiTimeframeMarketAnalyzer:
         }
 
         
-        # 按需附加特定周期的均线与动量指标
-        if period_days == self.timeframes["short"]:
+        # 按需附加特定周期的均线与动量指标 - 根据 tier_name 分发
+        if tier_name == "short":
             rsi = self._safe_float(latest.get("RSI_14"), 50.0)
             result["technicals"]["rsi_14"] = round(rsi, 2)
             if rsi < 30:
@@ -227,16 +236,25 @@ class MultiTimeframeMarketAnalyzer:
             elif rsi > 70:
                 tags.add("[RSI_OVERBOUGHT]")
             
-        elif period_days == self.timeframes["medium"]:
+        elif tier_name == "medium":
             sma_50 = self._safe_float(latest.get("SMA_50"))
             if sma_50 > 0:
                 dist = ((latest_close / sma_50) - 1) * 100
                 result["technicals"]["distance_to_sma50_pct"] = round(dist, 2)
                 tags.add("[ABOVE_SMA50]" if dist > 0 else "[BELOW_SMA50]")
                 
-        elif period_days == self.timeframes["long"]:
+        elif tier_name == "semi_long":
+            # 补全 MACD 柱状图
+            macd_h = self._safe_float(latest.get("MACDh_12_26_9"), 0.0)
+            result["technicals"]["macd_histogram"] = round(macd_h, 4)
+            
+        elif tier_name == "long":
+            # 补全 SMA200 的距离
             sma_200 = self._safe_float(latest.get("SMA_200"))
             if sma_200 > 0:
+                dist_200 = ((latest_close / sma_200) - 1) * 100
+                result["technicals"]["distance_to_sma200_pct"] = round(dist_200, 2)
                 tags.add("[SECULAR_BULL_TREND]" if latest_close > sma_200 else "[SECULAR_BEAR_TREND]")
 
         return result
+
