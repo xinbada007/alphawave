@@ -21,6 +21,7 @@ openbb-equity==1.5.1
 openbb-technical==1.5.1
 openbb-sec==1.5.1
 openbb-news==1.5.1
+pandas-ta-openbb>=0.4.23
 
 # --- 严格依赖对齐 (解决死锁的关键) ---
 # 必须锁定这些版本，否则 OpenBB 会报兼容性错误

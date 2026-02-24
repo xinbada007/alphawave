@@ -10,6 +10,10 @@ from datetime import datetime
 # 严格遵循你提供的基类
 from alphaflow.core.base import BaseProcessor
 from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack
+
+# 技术面分析组件
+from alphaflow.components.processors.techniques import MultiTimeframeMarketAnalyzer
+
 from alphaflow.core.data_utils import (
     FinKey,
     MetaKey,
@@ -331,7 +335,9 @@ class TechnicalProcessor(BaseProcessor):
         # 挂载分析器插件池
         self.analyzers: List[FeatureAnalyzer] = [
             CoreFinancialRatioAnalyzer(),
+            MultiTimeframeMarketAnalyzer(config),  # 新增：多时间框架市场分析器
         ]
+
 
     async def process(self, context: AnalysisContext, input_data: Any, **kwargs) -> ComponentOutput:
         """
