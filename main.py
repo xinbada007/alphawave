@@ -9,6 +9,7 @@ from alphaflow.engine.pipeline import ResearchPipeline
 
 # 导入拆分后的 Collector (在代理设置后导入)
 from alphaflow.components.collectors.fundamental import FundamentalCollector
+from alphaflow.components.collectors.fundamentals import FundamentalCollector as FundamentalCollectorV2
 from alphaflow.components.collectors.news import NewsCollector
 
 # 导入加工与展示组件
@@ -75,7 +76,9 @@ async def main():
     (
         pipeline.add_step(
             MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
-        ).add_step(FundamentalCollector("CoreDataFetcher"))
+        )
+        # .add_step(FundamentalCollector("CoreDataFetcher"))
+        .add_step(FundamentalCollectorV2("CoreDataFetcher_新版")) 
         .add_step(TechnicalProcessor("FeatureProcessor"))
         # pipeline.add_step(
         #     FundamentalCollector("CoreDataFetcher")
