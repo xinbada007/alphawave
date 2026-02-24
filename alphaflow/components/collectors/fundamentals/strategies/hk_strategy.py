@@ -5,7 +5,7 @@ HK Market Strategy - 港股市场策略
 from typing import Dict, List
 
 from .base import BaseMarketStrategy
-from ..fetchers.akshare_fetcher import AkShareFetcher
+from ..fetchers.akshare_hk_fetcher import AkShareHKFetcher
 from ..fetchers.obb_fetcher import OBBFetcher
 from ..fetchers.yfinance_fetcher import YFinanceFetcher
 
@@ -15,7 +15,7 @@ class HKMarketStrategy(BaseMarketStrategy):
     
     def __init__(self):
         # 实例化 Fetcher
-        self.ak = AkShareFetcher()
+        self.ak = AkShareHKFetcher()
         self.obb_yf = OBBFetcher(provider="yfinance")
         self.obb_fmp = OBBFetcher(provider="fmp")
         self.native_yf = YFinanceFetcher()
@@ -45,15 +45,15 @@ class HKMarketStrategy(BaseMarketStrategy):
             
             # === 高管与内幕交易：OpenBB ===
             "management": [self.obb_yf],
-            "insider_trading": [self.obb_yf],
+            # "insider_trading": [self.obb_yf],
             
             # === 🚨 高风险接口：部署多级 Fallback 责任链 ===
             # 拆股：优先 OBB fmp，失败则原生 yf
-            "splits": [self.obb_fmp, self.native_yf],
+            "splits": [self.native_yf],
             
             # 大股东：优先 OBB yf，失败则原生 yf
-            "major_holders": [self.obb_yf, self.native_yf],
+            "major_holders": [self.native_yf],
             
             # 财报日历：原生 yf 更稳
-            "earnings_cal": [self.native_yf, self.obb_fmp],
+            "earnings_cal": [self.native_yf],
         }

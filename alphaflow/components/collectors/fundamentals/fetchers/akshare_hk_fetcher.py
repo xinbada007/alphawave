@@ -1,6 +1,6 @@
 """
-AkShare Fetcher - 纯 AkShare 抓取器
-负责港股和 A 股的财务数据抓取
+AkShare HK Fetcher - 纯 AkShare 港股抓取器
+负责港股的财务数据抓取
 """
 import asyncio
 from typing import List, Dict, Any
@@ -11,10 +11,10 @@ from .base import BaseFetcher
 from alphaflow.core.data_utils import DIVIDEND_FIELD_CHAINS
 
 
-class AkShareFetcher(BaseFetcher):
-    """纯 AkShare 抓取器 - 只管 AkShare，无 fallback"""
+class AkShareHKFetcher(BaseFetcher):
+    """纯 AkShare 港股抓取器 - 只管港股，无 fallback"""
     
-    name = "AkShare"
+    name = "AkShareHK"
     
     # 类级别信号量：全局最多 2 个并发，防止触发 WAF
     _semaphore = asyncio.Semaphore(2)

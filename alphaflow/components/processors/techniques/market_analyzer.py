@@ -24,10 +24,10 @@ class MultiTimeframeMarketAnalyzer:
     """
     
     DEFAULT_TIMEFRAMES = {
-    "short_term": 21,       # 黄金甜点 1：短期情绪与期权周期
-    "medium_term": 63,      # 黄金甜点 2：中期波段与财报周期
-    "semi_long_term": 126,  # 黄金甜点 3：半年趋势与宏观定价
-    "long_term": 252        # 黄金甜点 4：长期牛熊与 52 周极值
+    "short": 21,       # 黄金甜点 1：短期情绪与期权周期
+    "medium": 63,      # 黄金甜点 2：中期波段与财报周期
+    "semi_long": 126,  # 黄金甜点 3：半年趋势与宏观定价
+    "long": 252        # 黄金甜点 4：长期牛熊与 52 周极值
 }
 
     
