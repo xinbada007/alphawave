@@ -15,17 +15,26 @@ class AkShareCNFetcher(BaseMarketFetcher):
     name = "AkShare_CN"
 
     async def fetch_price(self, symbol: str, days: int) -> pd.DataFrame:
-        # 脏活1：处理代码格式 (600519.SH -> 600519)
+        # 脏活1：处理代码格式 (600519.SH -> sh600519, 000001.SZ -> sz000001)
         code = symbol.split(".")[0]
+        # 添加市场前缀: 6开头=sh, 0/3开头=sz
+        if code.startswith("6"):
+            market_prefix = "sh"
+        else:
+            market_prefix = "sz"
+        tx_symbol = f"{market_prefix}{code}"
+        
         start_date = (datetime.now() - pd.Timedelta(days=int(days * 1.8))).strftime("%Y%m%d")
+        end_date = datetime.now().strftime("%Y%m%d")
         
         try:
-            # A股行情接口 (带重试)
+            # A股行情接口 - 使用腾讯接口 (stock_zh_a_hist_tx)
+            # 注意：参数不同，无 period 参数
             df = await _safe_akshare_call(
-                ak.stock_zh_a_hist,
-                symbol=code,
-                period="daily",
+                ak.stock_zh_a_hist_tx,
+                symbol=tx_symbol,
                 start_date=start_date,
+                end_date=end_date,
                 adjust="qfq"
             )
             
