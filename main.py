@@ -2,20 +2,16 @@ import asyncio
 import argparse
 import requests
 
-from alphaflow.components.collectors.market_data import MarketDataCollector
 from alphaflow.components.collectors.market_data.collector import MarketDataCollector as MarketDataCollectorV2
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
 from alphaflow.engine.pipeline import ResearchPipeline
 
 # 导入拆分后的 Collector (在代理设置后导入)
-from alphaflow.components.collectors.fundamental import FundamentalCollector
 from alphaflow.components.collectors.fundamentals import FundamentalCollector as FundamentalCollectorV2
-from alphaflow.components.collectors.news import NewsCollector
 
 # 导入加工与展示组件
 from alphaflow.components.processors.technicals import TechnicalProcessor
-from alphaflow.components.visualizers.charting import QuickChartVisualizer
 
 
 def upload_to_file_io(pack_data: str) -> str:
@@ -56,6 +52,13 @@ async def main():
         "--days", type=int, default=250, help="Number of trading days to fetch"
     )
     parser.add_argument(
+        "--market",
+        type=str,
+        choices=["auto", "cn", "us", "hk"],
+        default="auto",
+        help="Market: auto (auto-detect) | cn (A股) | us (美股) | hk (港股)"
+    )
+    parser.add_argument(
         "--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)"
     )
     args = parser.parse_args()
@@ -63,7 +66,7 @@ async def main():
     # 1. 配置全局环境
     context = AnalysisContext(
         symbols=args.symbols,
-        metadata={"days": args.days},  # 将交易日需求存入元数据
+        metadata={"days": args.days, "market": args.market},  # 将交易日需求存入元数据
     )
     global_ctx = GlobalContext()
     if args.proxy:
