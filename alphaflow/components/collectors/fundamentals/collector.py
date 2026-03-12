@@ -16,6 +16,7 @@ from alphaflow.core.data_utils import (
     get_field_value,
     get_market_type,
     MarketType,
+    MetaKey,
 )
 from alphaflow.core.financial_math import (
     calc_ttm_stitch,
@@ -123,7 +124,7 @@ class FundamentalCollector(BaseCollector):
         # 日期与报表类型
         q_suffix = "_ytd" if is_cum else "_discrete"
         anchor_date = None
-        latest_d_raw = latest_is.get("period_ending")
+        latest_d_raw = latest_is.get(MetaKey.PERIOD_ENDING)
         if latest_d_raw:
             anchor_date = pd.to_datetime(latest_d_raw)
         

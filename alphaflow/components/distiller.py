@@ -22,7 +22,7 @@ DEFAULT_DISTILL_SCHEMA: Dict[str, List[str]] = {
     r"^(a_analysis|q_analysis.*)$": ["REV_GROWTH_YOY", "NI_GROWTH_YOY", "ROE", "GROSS_MARGIN", "NET_MARGIN"]
 }
 
-ALWAYS_KEEP_META = ["period_ending", "REPORT_DATE", "DATE_TYPE_CODE", "START_DATE"]
+ALWAYS_KEEP_META = ["PERIOD_ENDING", "REPORT_DATE", "DATE_TYPE_CODE", "START_DATE"]
 
 
 # ==========================================

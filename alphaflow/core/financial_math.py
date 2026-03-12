@@ -258,8 +258,8 @@ def calculate_growth_yoy(
         
         if match:
             prev_val = get_field_value_func(prev, field)
-            if prev_val and prev_val > 0:
-                return round((cur_val - prev_val) / prev_val, 4)
+            if prev_val:
+                return round((cur_val - prev_val) / abs(prev_val), 4)
     
     return None
 
