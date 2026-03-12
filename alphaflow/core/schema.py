@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Set
 import pandas as pd
 import time
 import io
@@ -59,8 +59,16 @@ class DataFrameModel(BaseModel):
             index_names=idx_names
         )
 
-    def to_df(self) -> pd.DataFrame:
-        """还原为 Pandas DataFrame，精确恢复类型与索引"""
+    # 核心列（必须为数值类型，否则后续 TA 计算会崩溃）
+    CORE_NUMERIC_COLUMNS: ClassVar[Set[str]] = {"close", "open", "high", "low", "volume", "adj_close", "adjusted_close"}
+
+    def to_df(self, symbol: str = "UNKNOWN") -> pd.DataFrame:
+        """
+        还原为 Pandas DataFrame，精确恢复类型与索引
+        
+        Args:
+            symbol: 股票代码，用于错误日志追踪
+        """
         if not self.data_json or self.data_json == "[]":
             return pd.DataFrame()
 
@@ -73,6 +81,8 @@ class DataFrameModel(BaseModel):
                 continue
 
             dtype_str_lower = dtype_str.lower()
+            is_core_column = col.lower() in self.CORE_NUMERIC_COLUMNS
+            
             try:
                 if "datetime" in dtype_str_lower:
                     # 恢复时间类型
@@ -86,7 +96,24 @@ class DataFrameModel(BaseModel):
                     # 其他类型 (如 object/string)
                     df[col] = df[col].astype(dtype_str)
             except Exception as e:
-                print(f" Warning: Failed to cast column '{col}' to {dtype_str}: {e}")
+                # 核心列转换失败：打印带 symbol 和 column 的严重警告
+                if is_core_column:
+                    print(f"🚨 CRITICAL [{symbol}] Failed to restore core column '{col}' to {dtype_str}: {e}")
+                    # 尝试强制清理不可见字符后重试
+                    try:
+                        # 移除可能的不可见字符和非数字字符
+                        df[col] = df[col].astype(str).str.replace(r"[^\d.\-]", "", regex=True)
+                        df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+                        print(f"   ↳ Fallback succeeded for '{col}'")
+                    except Exception as fallback_error:
+                        print(f"   ↳ Fallback also failed: {fallback_error}")
+                        # 核心列失败不应该默默 continue，直接抛出
+                        raise RuntimeError(
+                            f"CRITICAL: Failed to restore core column '{col}' for {symbol}. "
+                            f"This will break downstream TA calculations. Original error: {e}"
+                        )
+                else:
+                    print(f" Warning: Failed to cast column '{col}' to {dtype_str}: {e}")
                 continue
 
         # 3. 🌟 核心修复：把当初的列重新扶正为 Index
@@ -153,8 +180,10 @@ class ResearchPack(BaseModel):
     market_data: Optional[DataFrameModel] = None  # OHLCV 时间序列
     market_metrics: Optional[Dict[str, Any]] = None  # 市场快照指标：市值、PE、PB、PS、EPS等
     market_data_meta: Optional[Dict[str, Any]] = None  # 市场数据元信息：provider、columns等
-    technicals: Optional[DataFrameModel] = None  # 技术指标时间序列
+    technicals: Optional[DataFrameModel] = None  # 技术指标时间序列（保留兼容性）
+    technical_summary: Optional[Dict[str, Any]] = None  # 技术面汇总（当前快照，非时间序列）
     fundamentals: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})  # 财务数据
+
 
     # 非结构化/文本数据
     news: List[Dict[str, Any]] = Field(default_factory=list)

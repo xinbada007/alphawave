@@ -2,20 +2,18 @@ import asyncio
 import argparse
 import requests
 
-from alphaflow.components.collectors.market_data import MarketDataCollector
 from alphaflow.components.collectors.market_data.collector import MarketDataCollector as MarketDataCollectorV2
 from alphaflow.core.schema import AnalysisContext
 from alphaflow.core.context import GlobalContext
 from alphaflow.engine.pipeline import ResearchPipeline
 
 # 导入拆分后的 Collector (在代理设置后导入)
-from alphaflow.components.collectors.fundamental import FundamentalCollector
 from alphaflow.components.collectors.fundamentals import FundamentalCollector as FundamentalCollectorV2
 from alphaflow.components.collectors.news import NewsCollector
 
-# 导入加工与展示组件
-from alphaflow.components.processors.technicals import TechnicalProcessor
-from alphaflow.components.visualizers.charting import QuickChartVisualizer
+# 导入加工与展示组件 (暂时注释)
+# from alphaflow.components.processors.technicals import TechnicalProcessor
+# from alphaflow.components.visualizers.charting import QuickChartVisualizer
 
 
 def upload_to_file_io(pack_data: str) -> str:
@@ -58,6 +56,10 @@ async def main():
     parser.add_argument(
         "--proxy", type=str, help="Proxy URL (e.g., socks5://127.0.0.1:1080)"
     )
+    # 🚀 添加 --debug 参数，启用后 raw_provider_data 将包含在输出中
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug mode to include raw_provider_data in payload"
+    )
     args = parser.parse_args()
 
     # 1. 配置全局环境
@@ -66,6 +68,12 @@ async def main():
         metadata={"days": args.days},  # 将交易日需求存入元数据
     )
     global_ctx = GlobalContext()
+    
+    # 🚀 注入 DEBUG 状态到全局上下文（环境上下文模式）
+    if args.debug:
+        global_ctx.set("DEBUG", True)
+        print("🔧 DEBUG MODE ENABLED: raw_provider_data will be included in the payload.")
+    
     if args.proxy:
         global_ctx.set("PROXY", args.proxy)
         global_ctx.apply_proxy()
@@ -82,7 +90,7 @@ async def main():
         )
         # .add_step(FundamentalCollector("CoreDataFetcher"))
         .add_step(FundamentalCollectorV2("CoreDataFetcher_新版")) 
-        .add_step(TechnicalProcessor("FeatureProcessor"))
+        # .add_step(TechnicalProcessor("FeatureProcessor"))
         # pipeline.add_step(
         #     FundamentalCollector("CoreDataFetcher")
         # ).add_step(  # 维度 1: 股价 + 经营面 (核心金融数据)

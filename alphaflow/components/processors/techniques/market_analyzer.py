@@ -15,6 +15,10 @@ import pandas_ta as ta     # 现在它在底层调用 importlib.metadata 就不�
 from typing import Any, Dict, Optional
 
 from alphaflow.core.schema import ResearchPack
+from alphaflow.components.processors.techniques.technical_tag_config import (
+    TechnicalTagConfig,
+    TechnicalTagPresets,
+)
 
 
 class MultiTimeframeMarketAnalyzer:
@@ -22,6 +26,11 @@ class MultiTimeframeMarketAnalyzer:
     基于 pandas-ta 的多时间框架市场动作分析器 (满血版)
     集成了: 趋势绩效、风险回撤、量价异常、形态缺口四大模块
     """
+    
+    @property
+    def target_slot(self) -> str:
+        """自描述：技术面情绪数据存到 technical_and_sentiment"""
+        return "technical_and_sentiment"
     
     DEFAULT_TIMEFRAMES = {
     "short": 21,       # 黄金甜点 1：短期情绪与期权周期
@@ -34,6 +43,8 @@ class MultiTimeframeMarketAnalyzer:
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
         self.timeframes = self.config.get("timeframes", self.DEFAULT_TIMEFRAMES)
+        # 技术面标签配置
+        self._tag_config = TechnicalTagConfig(self.config.get("tag_config"))
     
     def analyze(self, pack: ResearchPack) -> Dict[str, Any]:
         if not pack.market_data:
@@ -70,7 +81,41 @@ class MultiTimeframeMarketAnalyzer:
             # 计算成交量异动倍数
             df['volume_spike_ratio'] = df['volume'] / df['ADV_20']
             
+            # --- 模块3.1：机构资金流向指标 (CMF) ---
+            df.ta.cmf(length=21, append=True)
+            
+            # --- 模块3.2：上涨/下跌日成交量比 ---
+            df['up_volume'] = np.where(df['daily_return'] > 0, df['volume'], 0)
+            df['down_volume'] = np.where(df['daily_return'] < 0, df['volume'], 0)
+            df['up_vol_ma20'] = df['up_volume'].rolling(window=20).mean()
+            df['down_vol_ma20'] = df['down_volume'].rolling(window=20).mean()
+            df['up_down_ratio'] = df['up_vol_ma20'] / df['down_vol_ma20'].replace(0, np.nan)
+            
         return df
+    
+    def _get_cmf_tag(self, cmf_value: float) -> Dict[str, str]:
+        """CMF 5档梯度语义映射"""
+        cfg = self._tag_config
+        if cmf_value >= cfg.CMF_STRONG_ACCUMULATION:
+            return {"tag": "[STRONG_ACCUMULATION]", "status": f"Strong Buying Pressure (>= {cfg.CMF_STRONG_ACCUMULATION})"}
+        elif cmf_value >= cfg.CMF_MODERATE_INFLOW:
+            return {"tag": "[MODERATE_INFLOW]", "status": f"Slight Bullish Edge ({cfg.CMF_MODERATE_INFLOW} to {cfg.CMF_STRONG_ACCUMULATION})"}
+        elif cmf_value >= cfg.CMF_MODERATE_OUTFLOW:
+            return {"tag": "[NEUTRAL_FLOW]", "status": f"Neutral ({cfg.CMF_MODERATE_OUTFLOW} to {cfg.CMF_MODERATE_INFLOW})"}
+        elif cmf_value >= cfg.CMF_STRONG_DISTRIBUTION:
+            return {"tag": "[MODERATE_OUTFLOW]", "status": f"Slight Bearish Edge ({cfg.CMF_STRONG_DISTRIBUTION} to {cfg.CMF_MODERATE_OUTFLOW})"}
+        else:
+            return {"tag": "[STRONG_DISTRIBUTION]", "status": f"Heavy Institutional Selling (<= {cfg.CMF_STRONG_DISTRIBUTION})"}
+    
+    def _get_up_down_vol_tag(self, ratio: float) -> Dict[str, str]:
+        """Up/Down Volume Ratio 3档梯度语义映射"""
+        cfg = self._tag_config
+        if ratio > cfg.UP_DOWN_RATIO_BULL_THRESHOLD:
+            return {"tag": "[BUY_VOLUME_DOMINATING]", "status": f"Buy volume dominating (> {cfg.UP_DOWN_RATIO_BULL_THRESHOLD})"}
+        elif ratio < cfg.UP_DOWN_RATIO_BEAR_THRESHOLD:
+            return {"tag": "[SELL_VOLUME_DOMINATING]", "status": f"Sell volume dominating (< {cfg.UP_DOWN_RATIO_BEAR_THRESHOLD})"}
+        else:
+            return {"tag": "[VOLUME_BALANCED]", "status": f"Volume balanced ({cfg.UP_DOWN_RATIO_BEAR_THRESHOLD} to {cfg.UP_DOWN_RATIO_BULL_THRESHOLD})"}
 
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
         if value is None or pd.isna(value) or np.isinf(value):
@@ -148,15 +193,49 @@ class MultiTimeframeMarketAnalyzer:
         latest_vol_ratio = self._safe_float(latest.get("volume_spike_ratio"), 1.0)
         latest_daily_ret = self._safe_float(latest.get("daily_return"), 0.0)
         
-        vol_data = {"volume_spike_ratio": round(latest_vol_ratio, 2)}
+        vol_data: Dict[str, Any] = {"volume_spike_ratio": round(latest_vol_ratio, 2)}
         if 'ADV_20' in latest.index:
             vol_data["adv_20"] = int(self._safe_float(latest['ADV_20']))
             
-        if latest_vol_ratio > 1.5 and latest_daily_ret < -0.02:
+        # --- CMF 机构资金流向 (带 NaN 兜底) ---
+        raw_cmf = latest.get("CMF_21")
+        if raw_cmf is None or pd.isna(raw_cmf):
+            cmf_value = 0.0
+            cmf_tag = {"tag": "[INSUFFICIENT_DATA]", "status": "Not enough trading days for CMF"}
+        else:
+            cmf_value = self._safe_float(raw_cmf, 0.0)
+            cmf_tag = self._get_cmf_tag(cmf_value)
+        vol_data["institutional_flow_metrics"] = {
+            "indicator": "Chaikin Money Flow (CMF_21)",
+            "value": round(cmf_value, 4),
+            "threshold_status": cmf_tag["status"],
+            "action_tag": cmf_tag["tag"]
+        }
+        if cmf_tag["tag"] in ["[STRONG_ACCUMULATION]", "[STRONG_DISTRIBUTION]"]:
+            tags.add(cmf_tag["tag"])
+            
+        # --- Up/Down Volume Ratio (带 NaN 兜底) ---
+        raw_ratio = latest.get("up_down_ratio")
+        if raw_ratio is None or pd.isna(raw_ratio):
+            up_down_ratio = 1.0
+            up_down_tag = {"tag": "[INSUFFICIENT_DATA]", "status": "Not enough trading days for ratio"}
+        else:
+            up_down_ratio = self._safe_float(raw_ratio, 1.0)
+            up_down_tag = self._get_up_down_vol_tag(up_down_ratio)
+        vol_data["up_down_volume_ratio"] = {
+            "value": round(up_down_ratio, 2),
+            "implication": f"{up_down_tag['tag']} {up_down_tag['status']}"
+        }
+        if up_down_tag["tag"] not in ["[VOLUME_BALANCED]", "[INSUFFICIENT_DATA]"]:
+            tags.add(up_down_tag["tag"])
+            
+        # --- 使用配置文件的量价异常检测 ---
+        cfg = self._tag_config
+        if latest_vol_ratio > cfg.VOLUME_SPIKE_MULTIPLIER and latest_daily_ret < cfg.VOLUME_SPIKE_DROP_THRESHOLD:
             tags.add("[MASSIVE_DISTRIBUTION]")  # 放量暴跌
-        elif latest_vol_ratio > 1.5 and latest_daily_ret > 0.02:
+        elif latest_vol_ratio > cfg.VOLUME_SPIKE_MULTIPLIER and latest_daily_ret > cfg.VOLUME_SPIKE_RALLY_THRESHOLD:
             tags.add("[MASSIVE_ACCUMULATION]")  # 天量抢筹
-        elif latest_vol_ratio < 0.6 and latest_daily_ret < -0.01:
+        elif latest_vol_ratio < cfg.VOLUME_CONTRACTION_MULTIPLIER and latest_daily_ret < cfg.VOLUME_CONTRACTION_DROP_THRESHOLD:
             tags.add("[LOW_CONVICTION_SELLOFF]")  # 缩量阴跌
             
         # ==========================================
@@ -229,19 +308,21 @@ class MultiTimeframeMarketAnalyzer:
         
         # 按需附加特定周期的均线与动量指标 - 根据 tier_name 分发
         if tier_name == "short":
+            cfg = self._tag_config
             rsi = self._safe_float(latest.get("RSI_14"), 50.0)
             result["technicals"]["rsi_14"] = round(rsi, 2)
-            if rsi < 30:
+            if rsi < cfg.RSI_OVERSOLD_THRESHOLD:
                 tags.add("[RSI_OVERSOLD]")
-            elif rsi > 70:
+            elif rsi > cfg.RSI_OVERBOUGHT_THRESHOLD:
                 tags.add("[RSI_OVERBOUGHT]")
             
         elif tier_name == "medium":
+            cfg = self._tag_config
             sma_50 = self._safe_float(latest.get("SMA_50"))
             if sma_50 > 0:
                 dist = ((latest_close / sma_50) - 1) * 100
                 result["technicals"]["distance_to_sma50_pct"] = round(dist, 2)
-                tags.add("[ABOVE_SMA50]" if dist > 0 else "[BELOW_SMA50]")
+                tags.add("[ABOVE_SMA50]" if dist > cfg.SMA_DISTANCE_THRESHOLD else "[BELOW_SMA50]")
                 
         elif tier_name == "semi_long":
             # 补全 MACD 柱状图
@@ -254,7 +335,8 @@ class MultiTimeframeMarketAnalyzer:
             if sma_200 > 0:
                 dist_200 = ((latest_close / sma_200) - 1) * 100
                 result["technicals"]["distance_to_sma200_pct"] = round(dist_200, 2)
-                tags.add("[SECULAR_BULL_TREND]" if latest_close > sma_200 else "[SECULAR_BEAR_TREND]")
+                tags.add("[ABOVE_200_DAY_MA]" if latest_close > sma_200 else "[BELOW_200_DAY_MA]")
+
 
         return result
 

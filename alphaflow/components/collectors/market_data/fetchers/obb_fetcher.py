@@ -1,6 +1,7 @@
 """
 OpenBB/YFinance Fetcher - 通用市场抓取器
 职责：作为美股主力，以及港股/A股的兜底
+注意：百分比归一化已迁移至映射层 (metrics.py)，Fetcher 只负责数据搬运
 """
 import asyncio
 import os
@@ -63,45 +64,21 @@ class OBBFetcher(BaseMarketFetcher):
             try:
                 res = await asyncio.to_thread(
                     obb_any.equity.fundamental.metrics,
-                    symbol=symbol, 
+                    symbol=symbol,
                     provider=self.provider,
                 )
-                
+
                 if not res or not res.results:
                     return {}
-                
-                data = res.results[0].dict() if hasattr(res.results[0], 'dict') else vars(res.results[0])
-                
-                # 字段映射
-                metrics = self._map_standard_metrics(data)
-                
-                # 脏活：处理 YFinance 特有的百分比问题
-                # 对齐原版逻辑：同时处理标准化字段名和原始字段名
-                if self.provider == "yfinance":
-                    # 处理标准化字段名
-                    pct_fix_keys = ["dividendYieldTtm", "debtToEquity"]
-                    for k in pct_fix_keys:
-                        if k in metrics and metrics[k] is not None:
-                            try:
-                                metrics[k] = round(float(metrics[k]) / 100, 6)
-                            except (ValueError, TypeError):
-                                pass
-                    # 处理原始字段名 (raw_openbb)
-                    if "dividend_yield" in data and data["dividend_yield"] is not None:
-                        try:
-                            data["dividend_yield"] = round(float(data["dividend_yield"]) / 100, 6)
-                        except (ValueError, TypeError):
-                            pass
-                    if "debt_to_equity" in data and data["debt_to_equity"] is not None:
-                        try:
-                            data["debt_to_equity"] = round(float(data["debt_to_equity"]) / 100, 6)
-                        except (ValueError, TypeError):
-                            pass
 
-                metrics["raw_openbb"] = data
+                data = res.results[0].dict() if hasattr(res.results[0], 'dict') else vars(res.results[0])
+
+                # 字段映射 - 百分比归一化由映射层 (metrics.py) 的 transform 处理
+                metrics = self._map_standard_metrics(data, provider_id="obb")
+
                 metrics["_source"] = self.provider
                 return metrics
-                
+
             except Exception as e:
                 print(f"  [{self.name}] fetch_metrics failed for {symbol}: {e}")
                 return {}

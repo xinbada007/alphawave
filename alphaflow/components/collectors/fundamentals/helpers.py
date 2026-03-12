@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 import asyncio
 import akshare as ak  # type: ignore
 from alphaflow.core.data_utils import MarketType
+from alphaflow.core.mapping_keys.metrics import MetricsKey
 
 
 # ==========================================
@@ -89,35 +90,37 @@ def audit_currency_context(
 
     # =========================================================
     # 第一层：元数据标签审计 (Metadata Audit) - 针对 AkShare/港股最准
+    # 使用 MetricsKey 常量，享受强类型检测
     # =========================================================
-    raw_keys = metrics.get("raw_akshare", {})
-    if raw_keys:
-        # 1. 探测市值的币种
-        has_mcap_hkd = "总市值(港元)" in raw_keys or "港股市值(港元)" in raw_keys
-        
-        # 2. 探测财务指标的币种
-        # AkShare 惯例："(元)" 通常指人民币/公司本币，"(港元)" 指港币
-        has_eps_cny = "基本每股收益(元)" in raw_keys
-        has_bps_cny = "每股净资产(元)" in raw_keys
-        has_rev_cny = "营业总收入" in raw_keys # 通常不带单位，默认本币(CNY)
+    # 检查标准字段是否存在
+    # MARKET_CAP: 市场本币市值（港股=港元）
+    # HK_ONLY_MCAP: 仅 H 股部分市值
+    has_mcap_hkd = MetricsKey.MARKET_CAP in metrics or MetricsKey.HK_ONLY_MCAP in metrics
 
-        # 3. 判定逻辑：如果 市值是港币 AND (EPS是人民币 OR BPS是人民币)
-        if has_mcap_hkd and (has_eps_cny or has_bps_cny):
-            audit_report["is_misaligned"] = True
-            audit_report["detected_gap"] = "HKD_CNY_MISMATCH_BY_LABEL"
-            audit_report["reporting_currency"] = "CNY"
-            audit_report["trading_currency"] = "HKD"
-            audit_report["audit_method"] = "Metadata_Label_Check"
-            
-            # 给一个初始因子，后续数学审计可以微调它
-            audit_report["alignment_factor"] = 0.90 
+    # EPS_BASIC: 基本每股收益 - 通常为人民币
+    # BOOK_VALUE: 每股净资产 - 通常为人民币
+    has_eps_cny = MetricsKey.EPS_BASIC in metrics
+    has_bps_cny = MetricsKey.BOOK_VALUE in metrics
+    # TOTAL_REVENUE: 营业总收入 - 通常不带单位，默认本币(CNY)
+
+    # 3. 判定逻辑：如果 市值是港币 AND (EPS是人民币 OR BPS是人民币)
+    if has_mcap_hkd and (has_eps_cny or has_bps_cny):
+        audit_report["is_misaligned"] = True
+        audit_report["detected_gap"] = "HKD_CNY_MISMATCH_BY_LABEL"
+        audit_report["reporting_currency"] = "CNY"
+        audit_report["trading_currency"] = "HKD"
+        audit_report["audit_method"] = "Metadata_Label_Check"
+        
+        # 给一个初始因子，后续数学审计可以微调它
+        audit_report["alignment_factor"] = 0.90 
 
     # =========================================================
     # 第二层：数学锚点审计 (Math Audit) - 计算精确因子
+    # 使用 MetricsKey 常量，享受强类型检测
     # =========================================================
-    market_cap = metrics.get('marketCap')
-    api_pe = metrics.get('trailingPE')
-    api_pb = metrics.get('priceToBook')
+    market_cap = metrics.get(MetricsKey.MARKET_CAP)
+    api_pe = metrics.get(MetricsKey.PE_RATIO)
+    api_pb = metrics.get(MetricsKey.PRICE_TO_BOOK)
     
     # TTM 数据
     ni_ttm = ttm_financials.get('net_income') if ttm_financials else None

@@ -1,6 +1,7 @@
 """
 AkShare HK Fetcher - 港股专用抓取器
-职责：处理 .HK 代码，清洗港股特有的字段，归一化百分比
+职责：处理 .HK 代码，清洗港股特有的字段
+注意：百分比归一化已迁移至映射层 (metrics.py)，Fetcher 只负责数据搬运
 """
 import pandas as pd
 import akshare as ak # type: ignore
@@ -13,13 +14,6 @@ class AkShareHKFetcher(BaseMarketFetcher):
     """港股专用抓取器"""
     
     name = "AkShare_HK"
-    
-    # 需要归一化的百分比字段 (AkShare 返回 15.5 代表 15.5%，需要 /100)
-    PCT_FIELDS = {
-        "roe", "roa", "netMargin", "grossMargin", 
-        "payoutRatio", "dividendYieldTtm",
-        "revGrowthQoq", "niGrowthQoq", "revGrowthYoy", "niGrowthYoy"
-    }
 
     async def fetch_price(self, symbol: str, days: int) -> pd.DataFrame:
         # 脏活1：处理代码格式 (00700.HK -> 00700)
@@ -52,35 +46,26 @@ class AkShareHKFetcher(BaseMarketFetcher):
 
     async def fetch_metrics(self, symbol: str) -> Dict[str, Any]:
         code = symbol.split(".")[0].zfill(5)
-        
+
         try:
             # 港股指标接口 (带重试)
             m_df = await _safe_akshare_call(
                 ak.stock_hk_financial_indicator_em,
                 symbol=code
             )
-            
+
             if m_df is None or m_df.empty:
                 return {}
-            
+
             raw_dict = {str(k).strip(): v for k, v in m_df.iloc[0].to_dict().items()}
-            
-            # 脏活3：字段映射
-            metrics = self._map_standard_metrics(raw_dict)
-            
-            # 脏活4：数值归一化 (/100)
-            for k, v in metrics.items():
-                if k in self.PCT_FIELDS and v is not None:
-                    try:
-                        metrics[k] = round(float(v) / 100, 6)
-                    except (ValueError, TypeError):
-                        continue
-                        
-            metrics["raw_akshare"] = raw_dict
+
+            # 字段映射 - 百分比归一化由映射层 (metrics.py) 的 transform 处理
+            metrics = self._map_standard_metrics(raw_dict, provider_id="akshare")
+
             metrics["_source"] = "akshare"
             metrics["_market_type"] = "hk"
             return metrics
-            
+
         except Exception as e:
             print(f"  [{self.name}] fetch_metrics failed for {symbol}: {e}")
             return {}

@@ -1,6 +1,8 @@
 """
 OBB Fetcher - 纯 OpenBB 抓取器
 支持指定 provider (yfinance, fmp, sec 等)
+
+基于 ACL 防腐层设计，所有财务数据通过 ACLFinancialRecord 模型输出。
 """
 import asyncio
 from typing import List, Dict, Any, Optional, Callable
@@ -9,6 +11,9 @@ from openbb import obb
 import pandas as pd
 
 from .base import BaseFetcher
+from alphaflow.core.adapters import DynamicFinancialAdapter
+from alphaflow.core.data_utils import ReportPeriod
+from alphaflow.core.transform_adapter import _tx_filter_insider_trading
 
 # 全局绕过 Mypy 检查
 obb_any: Any = obb
@@ -18,6 +23,7 @@ class OBBFetcher(BaseFetcher):
     """纯 OpenBB 抓取器 - 只管 OpenBB，无 fallback"""
     
     name = "OpenBB"
+    is_cumulative = False  # 美股/OpenBB 默认离散制
     
     # 类级别信号量：全局最多 3 个并发
     _semaphore = asyncio.Semaphore(3)
@@ -28,15 +34,12 @@ class OBBFetcher(BaseFetcher):
         "estimates": {"func": obb_any.equity.estimates.consensus},
         "share_stats": {"func": obb_any.equity.ownership.share_statistics},
         "management": {"func": obb_any.equity.fundamental.management},
-        "dividends": {
-            "func": obb_any.equity.fundamental.dividends,
-            "sort_key": "ex_dividend_date"
-        },
+        # 🗑️ dividends 移至专用分支（需动态时间窗口）
         "insider_trading": {
             "func": obb_any.equity.ownership.insider_trading,
             "sort_key": "transaction_date",
             "provider": "sec",
-            "limit": 50
+            "filter_fn": _tx_filter_insider_trading  # 🚀 新增：声明式行级过滤器
         },
     }
     
@@ -48,12 +51,13 @@ class OBBFetcher(BaseFetcher):
             provider: 默认 provider (yfinance, fmp, sec 等)
         """
         self.default_provider = provider
+        self.adapter = DynamicFinancialAdapter(provider_id="obb")
     
-    async def fetch(self, task_name: str, symbol: str, **kwargs) -> List[Dict]:
+    async def _fetch_raw(self, task_name: str, symbol: str, **kwargs) -> List[Dict]:
         """任务翻译官：将标准化任务名翻译为 OpenBB 调用"""
         limit_a = kwargs.get("limit_a", 2)
         limit_q = kwargs.get("limit_q", 5)
-        limit = kwargs.get("limit", 8)  # earnings_cal 默认 8 条
+        limit = kwargs.get("limit", 8)  # 🚀 earnings_cal 默认 8 条
         
         # 1. 字典映射的简单任务
         if task_name in self.TASK_CONFIG:
@@ -65,7 +69,9 @@ class OBBFetcher(BaseFetcher):
                 func, symbol, task_name,
                 provider=target_provider,
                 sort_key=config.get("sort_key"),
-                **{k: v for k, v in config.items() if k not in ("func", "sort_key", "provider")}
+                filter_fn=config.get("filter_fn"),  # 🚀 新增参数传递
+                # 必须在 kwargs 解包中屏蔽这四个内部键
+                **{k: v for k, v in config.items() if k not in ("func", "sort_key", "provider", "filter_fn")}
             )
         
         # 2. 特殊任务 - 使用 default_provider
@@ -78,7 +84,11 @@ class OBBFetcher(BaseFetcher):
         elif task_name == "splits":
             return await self._fetch_splits(symbol, self.default_provider)
         
-        # 3. 财务报表任务 (动态映射: a_income, q_balance 等)
+        # 🚀 新增：dividends 升级为特殊任务（动态时间窗口）
+        elif task_name == "dividends":
+            return await self._fetch_dividends(symbol, self.default_provider)
+        
+        # 3. 财务报表任务 (动态映射：a_income, q_balance 等)
         elif "_" in task_name:
             parts = task_name.split("_")
             if len(parts) >= 2 and parts[1] in ("income", "balance", "cash"):
@@ -88,15 +98,10 @@ class OBBFetcher(BaseFetcher):
                 
                 if hasattr(obb_any.equity.fundamental, stmt_key):
                     func = getattr(obb_any.equity.fundamental, stmt_key)
-                    raw_data = await self._exec_obb_task(
+                    return await self._exec_obb_task(
                         func, symbol, task_name,
                         period=period, limit=limit
                     )
-                    # 添加 report_type 字段
-                    return [
-                        {**r, "report_type": period} if isinstance(r, dict) else r
-                        for r in raw_data
-                    ]
         
         # 不支持的任务
         raise ValueError(f"{self.name} does not support task: {task_name}")
@@ -109,6 +114,7 @@ class OBBFetcher(BaseFetcher):
         provider: Optional[str] = None,
         sort_key: Optional[str] = None,
         filter_symbol: bool = False,
+        filter_fn: Optional[Callable] = None,  # 🚀 扩充契约
         **kwargs
     ) -> List[Dict]:
         """执行 OpenBB 任务"""
@@ -144,6 +150,10 @@ class OBBFetcher(BaseFetcher):
                 # 过滤 Symbol
                 if filter_symbol and data:
                     data = [x for x in data if str(x.get("symbol", "")).upper() == symbol.upper()]
+                
+                # 🚀 新增：执行行级特征过滤 (先过滤，后排序，提升性能)
+                if filter_fn and data:
+                    data = [x for x in data if filter_fn(x)]
                 
                 # 排序
                 if sort_key and data:
@@ -210,13 +220,18 @@ class OBBFetcher(BaseFetcher):
         raise Exception(f"{self.name} major_holders unavailable")
     
     async def _fetch_splits(self, symbol: str, provider: str) -> List[Dict]:
-        """获取拆股历史"""
+        """获取拆股历史 (硬性截断最近 5 年，保护 LLM 视区)"""
         try:
+            now = datetime.now()
+            # 动态计算 5 年的物理时间窗口
+            start_date = (now - pd.Timedelta(days=5 * 365)).strftime("%Y-%m-%d")
+            
             data = await self._exec_obb_task(
                 obb_any.equity.calendar.splits,
                 symbol, "splits",
                 provider=provider,
-                sort_key="date"
+                sort_key="date",
+                start_date=start_date  # 🚀 从 API 请求源头掐断远古数据
             )
             if data:
                 return data
@@ -224,3 +239,24 @@ class OBBFetcher(BaseFetcher):
             raise Exception(f"{self.name} splits failed: {e}")
         
         raise Exception(f"{self.name} splits unavailable")
+    
+    async def _fetch_dividends(self, symbol: str, provider: str) -> List[Dict]:
+        """获取历史分红数据 (动态限制最近 7 年，防止抓取过多噪音)"""
+        try:
+            now = datetime.now()
+            # 动态计算 7 年的时间窗口
+            start_date = (now - pd.Timedelta(days=7 * 365)).strftime("%Y-%m-%d")
+            
+            data = await self._exec_obb_task(
+                obb_any.equity.fundamental.dividends,
+                symbol, "dividends",
+                provider=provider,
+                sort_key="ex_dividend_date",
+                start_date=start_date  # 🚀 透传给 OpenBB 底层
+            )
+            if data:
+                return data
+        except Exception as e:
+            raise Exception(f"{self.name} dividends failed: {e}")
+        
+        raise Exception(f"{self.name} dividends unavailable")

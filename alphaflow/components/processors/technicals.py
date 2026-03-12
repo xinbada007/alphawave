@@ -3,6 +3,7 @@
 =================================================
 """
 
+import asyncio
 import pandas as pd
 from typing import Any, Dict, List, Optional, Protocol
 from datetime import datetime
@@ -14,9 +15,13 @@ from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack
 # 技术面分析组件
 from alphaflow.components.processors.techniques import MultiTimeframeMarketAnalyzer
 
+# 基本面蒸馏组件
+from alphaflow.components.processors.fundamentals import FundamentalDistillationAnalyzer
+
 from alphaflow.core.data_utils import (
     FinKey,
     MetaKey,
+    PackSlot,
     ReportPeriod,
     get_field_value,
 )
@@ -29,12 +34,20 @@ from alphaflow.core.financial_math import (
 
 
 # ==========================================
-# 1. Analyzer 插件接口定义 (保持不变)
+# 1. Analyzer 插件接口定义 (自描述模式)
 # ==========================================
 
 class FeatureAnalyzer(Protocol):
+    """分析器协议 - 每个 Analyzer 自描述数据存储位置"""
+    
+    @property
+    def target_slot(self) -> str:
+        """返回目标槽位路径，如 'technical_and_sentiment' 或 'indicators'"""
+        ...
+    
     def analyze(self, pack: ResearchPack) -> Dict[str, Any]:
         ...
+
 
 # ==========================================
 # 2. 财务比率计算引擎 (CoreFinancialRatioAnalyzer)
@@ -48,6 +61,11 @@ class CoreFinancialRatioAnalyzer:
     2. Dimension Separation: 增长/效率/偿债/估值 拆分为独立方法。
     3. Explicit Naming: 变量名严格对应计算口径 (TTM vs Period Actual)。
     """
+
+    @property
+    def target_slot(self) -> str:
+        """自描述：财务比率数据存到 indicators"""
+        return "indicators"
 
     def analyze(self, pack: ResearchPack) -> Dict[str, Any]:
         """调度器：准备数据并分发计算任务"""
@@ -132,7 +150,7 @@ class CoreFinancialRatioAnalyzer:
         
         is_q_aligned = False
         if p_type == ReportPeriod.QUARTERLY.value:
-            is_q_aligned = True  # 锚点本身就是季报，天然放行
+            is_q_aligned = True # 锚点本身就是季报，天然放行
         elif p_type == ReportPeriod.ANNUAL.value and q_date and anchor_date:
             # 核心业务逻辑升级：如果当前在看年报，但系统里有新鲜的 Q4 数据 (相差不到30天)，予以放行！
             # 这挽救了美股和优质 A/港股的 Q4 Exit-Velocity 动量指标。
@@ -312,7 +330,7 @@ class CoreFinancialRatioAnalyzer:
             # 场景: 币种错配 (如港股 RMB 财报 vs HKD 市值) -> 借道 PE 消除汇率
             if "PE_Collision" in method:
                 api_pe = get_field_value(metrics, FinKey.PE)
-                if api_pe and api_pe > 0 and ttm_ni and ttm_ni > 0:
+                if api_pe is not None and api_pe > 0 and ttm_ni is not None and ttm_ni > 0 and ttm_fcf > 0:
                     res["fcf_yield_realtime_ttm"] = round((ttm_fcf / ttm_ni) / api_pe, 4)
             # 场景: 常规同币种 -> 直接除
             else:
@@ -322,7 +340,7 @@ class CoreFinancialRatioAnalyzer:
 
 
 # ==========================================
-# 3. 核心 Processor (保持不变)
+# 3. 核心 Processor (优雅升级)
 # ==========================================
 
 class TechnicalProcessor(BaseProcessor):
@@ -336,6 +354,7 @@ class TechnicalProcessor(BaseProcessor):
         self.analyzers: List[FeatureAnalyzer] = [
             CoreFinancialRatioAnalyzer(),
             MultiTimeframeMarketAnalyzer(config),  # 新增：多时间框架市场分析器
+            FundamentalDistillationAnalyzer(),      # 新增：基本面蒸馏分析器
         ]
 
 
@@ -361,19 +380,23 @@ class TechnicalProcessor(BaseProcessor):
             
         print(f"  [TechnicalProcessor] Computing derived indicators for {pack.symbol}...")
 
-        # 3. 为 A/B 测试创建一个新的承载容器
-        if not hasattr(pack, "fundamentals") or pack.fundamentals is None:
-            pack.fundamentals = {}
-            
-        if "indicators" not in pack.fundamentals:
-            pack.fundamentals["indicators"] = {}
+        # 3. 初始化 technical_summary 容器
+        if pack.technical_summary is None:
+            pack.technical_summary = {}
 
-        # 4. 遍历所有挂载的分析器进行运算
+        # 4. 遍历所有挂载的分析器进行运算（自描述路由）
+        # 使用 asyncio.to_thread 将同步计算密集型任务放入线程池，避免阻塞事件循环
         for analyzer in self.analyzers:
             try:
-                result = analyzer.analyze(pack)
+                result = await asyncio.to_thread(analyzer.analyze, pack)
                 if result:
-                    pack.fundamentals["indicators"].update(result)
+                    # 🌟 动态路由：每个 Analyzer 自描述存储位置
+                    slot_name = analyzer.target_slot
+                    # 如果 result 已经是扁平结构，直接赋值；否则提取内部值
+                    if slot_name in result:
+                        pack.technical_summary[slot_name] = result[slot_name]
+                    else:
+                        pack.technical_summary[slot_name] = result
             except Exception as e:
                 print(f"  [TechnicalProcessor] {analyzer.__class__.__name__} Failed for {pack.symbol}: {e}")
 

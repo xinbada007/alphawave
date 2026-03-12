@@ -1,150 +1,113 @@
 """
-Base Market Fetcher - 市场数据抓取器基类
-定义统一契约，提供通用字段映射工具
+Market Data Fetcher Base - 市场数据抓取器基类
+=============================================
+提供价格行情和估值指标的通用抓取能力
 """
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Callable
+from typing import Dict, Any, List, Optional
 import pandas as pd
-from tenacity import retry, stop_after_attempt, wait_exponential
+import akshare as ak  # type: ignore
 
-from alphaflow.core.data_utils import (
-    MARKET_FIELD_CHAINS,
-    FINANCIAL_FIELD_CHAINS,
-    get_field_value,
-)
-
-# 全局 AkShare 防并发风暴锁
-AKSHARE_SEMAPHORE = asyncio.Semaphore(5)
+from alphaflow.core.adapters import DynamicFinancialAdapter
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=2, max=10),
-    reraise=False
-)
-async def _safe_akshare_call(func: Callable, *args, **kwargs) -> Any:
-    """安全的 AkShare 调用封装：加锁 + 重试"""
-    async with AKSHARE_SEMAPHORE:
-        return await asyncio.to_thread(func, *args, **kwargs)
+# ==========================================
+# 辅助函数：AkShare 安全调用
+# ==========================================
+async def _safe_akshare_call(func, **kwargs) -> pd.DataFrame:
+    """带重试和异常捕获的 AkShare 调用封装"""
+    try:
+        df = await asyncio.to_thread(func, **kwargs)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        print(f"  [AkShare] {func.__name__} failed: {e}")
+        return pd.DataFrame()
+
 
 class BaseMarketFetcher(ABC):
-    """原子抓取器基类：只负责抓取 Price 和 Metrics"""
+    """
+    市场数据抓取器基类
+    
+    职责：
+    - fetch_price(): 获取 OHLCV 时间序列
+    - fetch_metrics(): 获取估值指标快照
+    """
     
     name: str = "BaseMarketFetcher"
-
-    # 字段名映射表：将 API 返回的各种 Alias 映射为标准字段名
-    FIELD_ALIAS_MAP = {
-        # Market 字段
-        "MCAP": "marketCap",
-        "MCAP_HK": "marketCapHk",
-        "PE": "trailingPE",
-        "PB": "priceToBook",
-        "PS": "priceToSales",
-        "PCF": "priceToCashFlow",
-        "DIVIDEND_YIELD": "dividendYieldTtm",
-        "EPS": "trailingEps",
-        "BPS": "bookValue",
-        "OCPS": "operatingCashFlowPerShare",
-        "DPS": "dividendPerShare",
-        "SHARES": "sharesOutstanding",
-        "SHARES_H": "sharesH",
-        "AUTHORIZED_SHARES": "authorizedShares",
-        "LOT_SIZE": "lotSize",
-        "PAYOUT_RATIO": "payoutRatio",
-        # Financial 字段
-        "REV": "totalRevenue",
-        "NI": "netProfit",
-        "OI": "operatingIncome",
-        "GP": "grossProfit",
-        "OCF": "operatingCashFlow",
-        "ASSETS": "totalAssets",
-        "LIAB": "totalLiabilities",
-        "EQUITY": "totalEquity",
-        # 百分比字段
-        "ROE": "roe",
-        "ROA": "roa",
-        "NET_MARGIN": "netMargin",
-        "GROSS_MARGIN": "grossMargin",
-        "REV_GROWTH_QOQ": "revGrowthQoq",
-        "NI_GROWTH_QOQ": "niGrowthQoq",
-        "REV_GROWTH_YOY": "revGrowthYoy",
-        "NI_GROWTH_YOY": "niGrowthYoy",
-    }
-
+    
+    def __init__(self):
+        """初始化 - 子类应设置 adapter"""
+        self.adapter: Optional[DynamicFinancialAdapter] = None
+    
     @abstractmethod
     async def fetch_price(self, symbol: str, days: int) -> pd.DataFrame:
-        """
-        抓取历史价格 (OHLCV)
-        必须返回: index=DatetimeIndex(naive), columns=[open, high, low, close, volume]
-        """
+        """获取价格行情 (OHLCV)"""
         pass
-
+    
     @abstractmethod
     async def fetch_metrics(self, symbol: str) -> Dict[str, Any]:
-        """
-        抓取实时估值指标
-        必须返回: 标准化的字典 key
-        """
+        """获取估值指标快照"""
         pass
-
-    def _map_standard_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """通用工具：仅做 Key 的映射，不做数值修改"""
-        metrics = {}
-        
-        # 1. 提取 Market 字段
-        for alias_key in MARKET_FIELD_CHAINS.keys():
-            val = get_field_value(data, alias_key, MARKET_FIELD_CHAINS)
-            if val is not None:
-                key = self.FIELD_ALIAS_MAP.get(alias_key, alias_key.lower())
-                metrics[key] = val
-        
-        # 2. 提取 Financial 字段
-        for alias_key in FINANCIAL_FIELD_CHAINS.keys():
-            val = get_field_value(data, alias_key, FINANCIAL_FIELD_CHAINS)
-            if val is not None:
-                key = self.FIELD_ALIAS_MAP.get(alias_key, alias_key.lower())
-                metrics[key] = val
-                
-        return metrics
     
     def _clean_dataframe(self, df: pd.DataFrame, rename_map: Dict[str, str]) -> pd.DataFrame:
-        """通用工具：DataFrame 标准化清洗 (重命名 -> 时区 -> 排序 -> 类型)"""
+        """
+        清洗 DataFrame
+        
+        Args:
+            df: 原始 DataFrame
+            rename_map: 列名重命名映射
+            
+        Returns:
+            清洗后的 DataFrame
+        """
         if df.empty:
-            return pd.DataFrame()
-
-        # 1. 重命名
-        df = df.rename(columns=rename_map)
+            return df
         
-        # 2. 索引处理 (去重 + 时区剥离)
+        # 重命名
+        if rename_map:
+            df = df.rename(columns=rename_map)
+        
+        # 统一 date 列
+        if "date" not in df.columns:
+            for c in ["Date", "DATE", "时间", "日期"]:
+                if c in df.columns:
+                    df = df.rename(columns={c: "date"})
+                    break
+        
+        # 确保 date 是 datetime
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"])
-            df = df.drop_duplicates(subset=["date"], keep='last')
-            df.set_index("date", inplace=True)
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
         
-        # 🌟 关键：强制剥离时区，确保下游计算无误
-        if isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index).tz_localize(None)
-            df.index.name = "date"
+        # 删除空行
+        df = df.dropna(subset=["date"])
         
-        # 3. 排序 (防止 API 倒序返回)
-        df.sort_index(ascending=True, inplace=True)
+        # 数值清洗
+        numeric_cols = ["open", "high", "low", "close", "volume"]
+        for c in numeric_cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
         
-        # 4. 类型强制转换
-        numeric_cols = ["open", "high", "low", "close", "volume", 
-                       "amount", "turnover_rate", "amplitude", "pct_change", "change_amount"]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # 5. 衍生指标
-        if "high" in df.columns and "low" in df.columns and "close" in df.columns:
-            df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
-        
-        if "vwap" not in df.columns:
-            if "amount" in df.columns and "volume" in df.columns:
-                df["vwap"] = (df["amount"] / df["volume"]).fillna(df["close"])
-            else:
-                df["vwap"] = None
-                
         return df
+    
+    def _map_standard_metrics(self, data: Dict[str, Any], provider_id: str = "unknown") -> Dict[str, Any]:
+        """
+        通用工具：使用 Core 层的全局 Adapter 进行极速清洗，消灭重复字典
+        
+        Args:
+            data: 原始数据字典
+            provider_id: Provider 标识符 ("obb" 或 "akshare")
+            
+        Returns:
+            标准化后的数据字典
+        """
+        if provider_id == "unknown" or not data:
+            return data
+        
+        adapter = DynamicFinancialAdapter(provider_id=provider_id)
+        # 市场快照属于估值指标上下文，调用 normalize 时传入 task_name="metrics"
+        cleaned_list = adapter.normalize([data], task_name="metrics")
+        
+        return cleaned_list[0] if cleaned_list else {}
