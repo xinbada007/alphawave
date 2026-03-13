@@ -7,13 +7,27 @@
 - 静态 Mixin 模式：每个报表一个独立文件
 - 高内聚低耦合：修改某个报表字段只需修改对应文件
 - IDE 完美支持：保留类型推断和代码补全
+- 三位一体：Meta 域包含 Mapping + Key Mixin + Record Mixin
 
 模块结构：
 - income_statement.py: 利润表字段定义
 - balance_sheet.py: 资产负债表字段定义
-- cash_flow.py: 现金流量表字段定义 (未来)
+- cash_flow.py: 现金流量表字段定义
+- meta.py: 系统核心元数据映射契约 (三位一体)
+- enums.py: 核心枚举定义 (打破循环导入)
 """
 
+# 基础枚举
+from alphaflow.core.mapping_keys.enums import ReportPeriod, MarketType
+
+# 元数据三位一体
+from alphaflow.core.mapping_keys.meta import (
+    META_MAPPING,
+    MetaKeyMixin,
+    MetaRecord,
+)
+
+# 财务报表映射
 from alphaflow.core.mapping_keys.income_statement import (
     INCOME_STATEMENT_MAPPING,
     IncomeStatementKey,
@@ -36,6 +50,13 @@ from alphaflow.core.mapping_keys.share_stats import (
 )
 
 __all__ = [
+    # 基础枚举
+    "ReportPeriod",
+    "MarketType",
+    # 元数据三位一体
+    "META_MAPPING",
+    "MetaKeyMixin",
+    "MetaRecord",
     # 利润表
     "INCOME_STATEMENT_MAPPING",
     "IncomeStatementKey",

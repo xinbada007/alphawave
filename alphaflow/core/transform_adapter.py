@@ -249,3 +249,16 @@ def _tx_filter_insider_trading(raw: Dict[str, Any]) -> bool:
         return False
     
     return True
+
+
+def _tx_format_date(val: Any, raw: Dict[str, Any]) -> Optional[str]:
+    """
+    [Field-Level Transform] 通用日期格式化
+    将任意合法日期格式转换为 YYYY-MM-DD
+    """
+    if val is None or str(val).strip() == "":
+        return None
+    try:
+        return pd.to_datetime(val).strftime("%Y-%m-%d")
+    except Exception:
+        return str(val)  # 解析失败则保留原样，由 Pydantic 决定生死

@@ -15,6 +15,7 @@
               合并 OBB 和 AkShare 映射，确保一一映射
               修复 V1 遗留 Bug：NONCONTROLLING_INTERESTS 和 TOTAL_EQUITY_CONSOLIDATED
               新增资产质量、CapEx 生命周期、隐藏杠杆、AOCI 字段
+- 2026-03-13: 新增审计字段：LONG_TERM_EQUITY_INVESTMENT、COMMERCIAL_PAPER、OTHER_CURRENT_BORROWINGS
 """
 
 from typing import Dict, List, Optional
@@ -32,6 +33,18 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
     "CASH_AND_CASH_EQUIVALENTS": {
         "obb": ["cash_and_cash_equivalents"],
         "akshare": ["现金及等价物"]
+    },
+    "CASH_ONLY": {
+        "obb": ["cash_financial"],
+        "akshare": []
+    },
+    "CASH_EQUIVALENTS": {
+        "obb": ["cash_equivalents"],
+        "akshare": []
+    },
+    "CASH_CASH_EQUIV_ST_INVEST": {
+        "obb": ["cash_cash_equivalents_and_short_term_investments"],
+        "akshare": []
     },
     "RESTRICTED_CASH": {
         "obb": [],
@@ -54,7 +67,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["交易性金融资产(流动)"]
     },
     "FINANCIAL_ASSETS_AT_FAIR_VALUE_CURRENT": {
-        "obb": [],
+        "obb": ["financial_assets_designatedas_fair_value_through_profitor_loss_total"],
         "akshare": ["指定以公允价值记账之金融资产(流动)"]
     },
     "OTHER_FINANCIAL_ASSETS_CURRENT": {
@@ -64,6 +77,10 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
     "ACCOUNTS_RECEIVABLE": {
         "obb": ["accounts_receivable"],
         "akshare": ["应收帐款"]
+    },
+    "NET_RECEIVABLES": {
+        "obb": ["net_receivables"],
+        "akshare": []
     },
     "RECEIVABLES_FROM_RELATED_PARTIES": {
         "obb": [],
@@ -81,6 +98,18 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["inventories"],
         "akshare": ["存货"]
     },
+    "RAW_MATERIALS": {
+        "obb": ["raw_materials"],
+        "akshare": []
+    },
+    "WORK_IN_PROCESS": {
+        "obb": ["work_in_process"],
+        "akshare": []
+    },
+    "FINISHED_GOODS": {
+        "obb": ["finished_goods"],
+        "akshare": []
+    },
     "HELD_TO_MATURITY_INVESTMENTS_CURRENT": {
         "obb": [],
         "akshare": ["持有至到期投资(流动)"]
@@ -90,7 +119,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["持作出售的资产(流动)"]
     },
     "DERIVATIVE_FINANCIAL_ASSETS_CURRENT": {
-        "obb": [],
+        "obb": ["hedging_assets_current"],
         "akshare": ["衍生金融工具-资产(流动)"]
     },
     "OTHER_CURRENT_ASSETS": {
@@ -101,7 +130,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["total_current_assets"],
         "akshare": ["流动资产合计"]
     },
-    
+
     # ==========================================
     # 📊 非流动资产 (Non-Current Assets)
     # ==========================================
@@ -109,8 +138,28 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["plant_property_equipment_net"],
         "akshare": ["物业厂房及设备", "固定资产"]
     },
+    "PLANT_PROPERTY_EQUIPMENT_GROSS": {
+        "obb": ["plant_property_equipment_gross"],
+        "akshare": ["固定资产原值"]
+    },
+    "LAND_AND_IMPROVEMENTS": {
+        "obb": ["land_and_improvements"],
+        "akshare": []
+    },
+    "BUILDINGS_AND_IMPROVEMENTS": {
+        "obb": ["buildings_and_improvements"],
+        "akshare": []
+    },
+    "MACHINERY_FURNITURE_EQUIPMENT": {
+        "obb": ["machinery_furniture_equipment"],
+        "akshare": []
+    },
+    "OTHER_PROPERTIES": {
+        "obb": ["other_properties"],
+        "akshare": []
+    },
     "INVESTMENT_PROPERTIES": {
-        "obb": [],
+        "obb": ["properties"],
         "akshare": ["投资物业"]
     },
     "LAND_USE_RIGHTS": {
@@ -130,8 +179,16 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["无形资产"]
     },
     "INTERESTS_IN_ASSOCIATES": {
-        "obb": [],
+        "obb": ["investments_and_advances"],
         "akshare": ["联营公司权益"]
+    },
+    "LONG_TERM_EQUITY_INVESTMENT": {
+        "obb": ["long_term_equity_investment"],
+        "akshare": []
+    },
+    "TRADING_FINANCIAL_ASSETS_NON_CURRENT": {
+        "obb": ["investmentin_financial_assets"],
+        "akshare": ["交易性金融资产(非流动)"]
     },
     "INTERESTS_IN_JOINT_VENTURES": {
         "obb": [],
@@ -142,7 +199,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["于联营公司可赎回工具的投资"]
     },
     "AVAILABLE_FOR_SALE_INVESTMENTS": {
-        "obb": [],
+        "obb": ["available_for_sale_securities"],
         "akshare": ["可供出售投资"]
     },
     "HELD_TO_MATURITY_INVESTMENTS": {
@@ -150,12 +207,8 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["持有至到期投资"]
     },
     "FINANCIAL_ASSETS_AT_FAIR_VALUE": {
-        "obb": [],
+        "obb": ["financial_assets"],
         "akshare": ["指定以公允价值记账之金融资产"]
-    },
-    "OTHER_FINANCIAL_ASSETS_NON_CURRENT": {
-        "obb": [],
-        "akshare": ["其他金融资产(非流动)"]
     },
     "OTHER_NON_CURRENT_ASSETS": {
         "obb": ["other_non_current_assets"],
@@ -169,7 +222,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["total_non_current_assets"],
         "akshare": ["非流动资产合计"]
     },
-    
+
     # ==========================================
     # 📊 资产总计 (Total Assets)
     # ==========================================
@@ -189,13 +242,25 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": [],
         "akshare": ["总权益及总负债"]
     },
-    
+
     # ==========================================
     # 📊 流动负债 (Current Liabilities)
     # ==========================================
     "SHORT_TERM_DEBT": {
         "obb": ["current_debt"],
         "akshare": ["短期贷款"]
+    },
+    "COMMERCIAL_PAPER": {
+        "obb": ["commercial_paper"],
+        "akshare": []
+    },
+    "OTHER_CURRENT_BORROWINGS": {
+        "obb": ["other_current_borrowings"],
+        "akshare": []
+    },
+    "CURRENT_DEBT_AND_LEASE_OBLIG": {
+        "obb": ["current_debt_and_capital_lease_obligation"],
+        "akshare": []
     },
     "NOTES_PAYABLE": {
         "obb": [],
@@ -209,9 +274,13 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": [],
         "akshare": ["应付关联方款项(流动)"]
     },
-    "TAX_PAYABLE": {
-        "obb": ["income_tax_payable"],
+    "TOTAL_TAX_PAYABLE": {
+        "obb": ["total_tax_payable"],
         "akshare": ["应付税项"]
+    },
+    "INCOME_TAX_PAYABLE": {
+        "obb": ["income_tax_payable"],
+        "akshare": []
     },
     "DIVIDENDS_PAYABLE": {
         "obb": [],
@@ -233,6 +302,10 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["current_deferred_revenue"],
         "akshare": ["递延收入(流动)", "预收款项"]
     },
+    "CURRENT_DEFERRED_LIABILITIES": {
+        "obb": ["current_deferred_liabilities"],
+        "akshare": []
+    },
     "DERIVATIVE_FINANCIAL_LIABILITIES_CURRENT": {
         "obb": [],
         "akshare": ["衍生金融工具-负债(流动)"]
@@ -245,7 +318,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["current_liabilities"],
         "akshare": ["流动负债合计"]
     },
-    
+
     # ==========================================
     # 📊 非流动负债 (Non-Current Liabilities)
     # ==========================================
@@ -258,7 +331,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["应付票据(非流动)"]
     },
     "LONG_TERM_PAYABLES": {
-        "obb": [],
+        "obb": ["tradeand_other_payables_non_current"],
         "akshare": ["长期应付款"]
     },
     "CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT": {
@@ -268,6 +341,10 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
     "DEFERRED_REVENUE_NON_CURRENT": {
         "obb": ["non_current_deferred_revenue"],
         "akshare": ["递延收入(非流动)"]
+    },
+    "NON_CURRENT_DEFERRED_LIABILITIES": {
+        "obb": ["non_current_deferred_liabilities"],
+        "akshare": []
     },
     "DEFERRED_TAX_LIABILITIES": {
         "obb": ["non_current_deferred_taxes_liabilities"],
@@ -285,7 +362,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["total_non_current_liabilities_net_minority_interest"],
         "akshare": ["非流动负债合计"]
     },
-    
+
     # ==========================================
     # 📊 总负债 (Total Liabilities)
     # ==========================================
@@ -293,7 +370,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["total_liabilities_net_minority_interest"],
         "akshare": ["总负债"]
     },
-    
+
     # ==========================================
     # 📊 股东权益 (Shareholders' Equity)
     # ==========================================
@@ -329,11 +406,19 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["total_common_equity"],
         "akshare": ["股东权益"]
     },
+    "COMMON_STOCK_EQUITY": {
+        "obb": ["common_stock_equity"],
+        "akshare": []
+    },
     "TOTAL_EQUITY_CONSOLIDATED": {
-        "obb": ["total_equity", "total_equity_non_controlling_interests"],
+        "obb": ["total_equity"],
         "akshare": ["总权益", "净资产"]
     },
-    
+    "TOTAL_EQUITY_NON_CONTROLLING_INTERESTS": {
+        "obb": ["total_equity_non_controlling_interests"],
+        "akshare": []
+    },
+
     # ==========================================
     # 📊 衍生指标 (Derived Metrics)
     # ==========================================
@@ -365,7 +450,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": ["share_issued"],
         "akshare": []
     },
-    
+
     # ==========================================
     # 🔵 新增流动资产/负债 (New Current Items)
     # ==========================================
@@ -378,10 +463,10 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["贷款及垫款(流动)"]
     },
     "CURRENT_PROVISIONS": {
-        "obb": [],
+        "obb": ["pensionand_other_post_retirement_benefit_plans_current"],
         "akshare": ["拨备(流动)"]
     },
-    
+
     # ==========================================
     # 🟣 新增非流动资产/负债 (New Non-Current Items)
     # ==========================================
@@ -405,7 +490,7 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": [],
         "akshare": ["可转换可赎回优先股"]
     },
-    
+
     # ==========================================
     # 🟠 新增汇总及交叉验证指标 (Derived / Check Items)
     # ==========================================
@@ -433,10 +518,6 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
     # ==========================================
     # 🟢 新增：资本开支生命周期预测 (CapEx Lifecycle)
     # ==========================================
-    "PLANT_PROPERTY_EQUIPMENT_GROSS": {
-        "obb": ["plant_property_equipment_gross"],
-        "akshare": ["固定资产原值"]
-    },
     "ACCUMULATED_DEPRECIATION": {
         "obb": ["accumulated_depreciation"],
         "akshare": ["累计折旧"]
@@ -462,8 +543,16 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
     # 🟣 新增：AOCI 留存收益的底色
     # ==========================================
     "ACCUMULATED_OTHER_COMPREHENSIVE_INCOME": {
-        "obb": ["accumulated_other_comprehensive_income_loss", "gains_losses_not_affecting_retained_earnings"],
+        "obb": ["accumulated_other_comprehensive_income_loss"],
         "akshare": ["其他综合收益"]
+    },
+    "OTHER_EQUITY_ADJUSTMENTS": {
+        "obb": ["other_equity_adjustments"],
+        "akshare": []
+    },
+    "GAINS_LOSSES_NOT_AFFECTING_RETAINED_EARNINGS": {
+        "obb": ["gains_losses_not_affecting_retained_earnings"],
+        "akshare": []
     },
 
     # ==========================================
@@ -478,7 +567,19 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": []
     },
     "TOTAL_PAYABLES_AND_ACCRUED_EXPENSES": {
-        "obb": ["payables_and_accrued_expenses", "payables"],
+        "obb": ["payables_and_accrued_expenses"],
+        "akshare": []
+    },
+    "PAYABLES": {
+        "obb": ["payables"],
+        "akshare": []
+    },
+    "TOTAL_CAPITALIZATION": {
+        "obb": ["total_capitalization"],
+        "akshare": []
+    },
+    "CAPITAL_LEASE_OBLIGATIONS": {
+        "obb": ["capital_lease_obligations"],
         "akshare": []
     },
 }
@@ -497,6 +598,9 @@ class BalanceSheetKey:
     # 📊 流动资产 (Current Assets)
     # ==========================================
     CASH_AND_CASH_EQUIVALENTS: str = "CASH_AND_CASH_EQUIVALENTS"
+    CASH_ONLY: str = "CASH_ONLY"
+    CASH_EQUIVALENTS: str = "CASH_EQUIVALENTS"
+    CASH_CASH_EQUIV_ST_INVEST: str = "CASH_CASH_EQUIV_ST_INVEST"
     RESTRICTED_CASH: str = "RESTRICTED_CASH"
     SHORT_TERM_DEPOSITS: str = "SHORT_TERM_DEPOSITS"
     LONG_TERM_DEPOSITS: str = "LONG_TERM_DEPOSITS"
@@ -505,26 +609,37 @@ class BalanceSheetKey:
     FINANCIAL_ASSETS_AT_FAIR_VALUE_CURRENT: str = "FINANCIAL_ASSETS_AT_FAIR_VALUE_CURRENT"
     OTHER_FINANCIAL_ASSETS_CURRENT: str = "OTHER_FINANCIAL_ASSETS_CURRENT"
     ACCOUNTS_RECEIVABLE: str = "ACCOUNTS_RECEIVABLE"
+    NET_RECEIVABLES: str = "NET_RECEIVABLES"
     RECEIVABLES_FROM_RELATED_PARTIES: str = "RECEIVABLES_FROM_RELATED_PARTIES"
     PREPAYMENTS: str = "PREPAYMENTS"
     PREPAYMENTS_AND_OTHER_RECEIVABLES: str = "PREPAYMENTS_AND_OTHER_RECEIVABLES"
     INVENTORIES: str = "INVENTORIES"
+    RAW_MATERIALS: str = "RAW_MATERIALS"
+    WORK_IN_PROCESS: str = "WORK_IN_PROCESS"
+    FINISHED_GOODS: str = "FINISHED_GOODS"
     HELD_TO_MATURITY_INVESTMENTS_CURRENT: str = "HELD_TO_MATURITY_INVESTMENTS_CURRENT"
     ASSETS_HELD_FOR_SALE: str = "ASSETS_HELD_FOR_SALE"
     DERIVATIVE_FINANCIAL_ASSETS_CURRENT: str = "DERIVATIVE_FINANCIAL_ASSETS_CURRENT"
     OTHER_CURRENT_ASSETS: str = "OTHER_CURRENT_ASSETS"
     TOTAL_CURRENT_ASSETS: str = "TOTAL_CURRENT_ASSETS"
-    
+
     # ==========================================
     # 📊 非流动资产 (Non-Current Assets)
     # ==========================================
     PLANT_PROPERTY_EQUIPMENT_NET: str = "PLANT_PROPERTY_EQUIPMENT_NET"
+    PLANT_PROPERTY_EQUIPMENT_GROSS: str = "PLANT_PROPERTY_EQUIPMENT_GROSS"
+    LAND_AND_IMPROVEMENTS: str = "LAND_AND_IMPROVEMENTS"
+    BUILDINGS_AND_IMPROVEMENTS: str = "BUILDINGS_AND_IMPROVEMENTS"
+    MACHINERY_FURNITURE_EQUIPMENT: str = "MACHINERY_FURNITURE_EQUIPMENT"
+    OTHER_PROPERTIES: str = "OTHER_PROPERTIES"
     INVESTMENT_PROPERTIES: str = "INVESTMENT_PROPERTIES"
     LAND_USE_RIGHTS: str = "LAND_USE_RIGHTS"
     CONSTRUCTION_IN_PROGRESS: str = "CONSTRUCTION_IN_PROGRESS"
     GOODWILL: str = "GOODWILL"
     INTANGIBLE_ASSETS: str = "INTANGIBLE_ASSETS"
     INTERESTS_IN_ASSOCIATES: str = "INTERESTS_IN_ASSOCIATES"
+    LONG_TERM_EQUITY_INVESTMENT: str = "LONG_TERM_EQUITY_INVESTMENT"
+    TRADING_FINANCIAL_ASSETS_NON_CURRENT: str = "TRADING_FINANCIAL_ASSETS_NON_CURRENT"
     INTERESTS_IN_JOINT_VENTURES: str = "INTERESTS_IN_JOINT_VENTURES"
     REDEEMABLE_INSTRUMENTS_IN_ASSOCIATES: str = "REDEEMABLE_INSTRUMENTS_IN_ASSOCIATES"
     AVAILABLE_FOR_SALE_INVESTMENTS: str = "AVAILABLE_FOR_SALE_INVESTMENTS"
@@ -534,7 +649,7 @@ class BalanceSheetKey:
     OTHER_NON_CURRENT_ASSETS: str = "OTHER_NON_CURRENT_ASSETS"
     OTHER_NON_CURRENT_ASSETS_ITEMS: str = "OTHER_NON_CURRENT_ASSETS_ITEMS"
     TOTAL_NON_CURRENT_ASSETS: str = "TOTAL_NON_CURRENT_ASSETS"
-    
+
     # ==========================================
     # 📊 资产总计 (Total Assets)
     # ==========================================
@@ -542,24 +657,29 @@ class BalanceSheetKey:
     NET_WORKING_CAPITAL: str = "NET_WORKING_CAPITAL"
     TOTAL_EQUITY_AND_NON_CURRENT_LIABILITIES: str = "TOTAL_EQUITY_AND_NON_CURRENT_LIABILITIES"
     TOTAL_EQUITY_AND_LIABILITIES: str = "TOTAL_EQUITY_AND_LIABILITIES"
-    
+
     # ==========================================
     # 📊 流动负债 (Current Liabilities)
     # ==========================================
     SHORT_TERM_DEBT: str = "SHORT_TERM_DEBT"
+    COMMERCIAL_PAPER: str = "COMMERCIAL_PAPER"
+    OTHER_CURRENT_BORROWINGS: str = "OTHER_CURRENT_BORROWINGS"
+    CURRENT_DEBT_AND_LEASE_OBLIG: str = "CURRENT_DEBT_AND_LEASE_OBLIG"
     NOTES_PAYABLE: str = "NOTES_PAYABLE"
     ACCOUNTS_PAYABLE: str = "ACCOUNTS_PAYABLE"
     PAYABLES_TO_RELATED_PARTIES_CURRENT: str = "PAYABLES_TO_RELATED_PARTIES_CURRENT"
-    TAX_PAYABLE: str = "TAX_PAYABLE"
+    TOTAL_TAX_PAYABLE: str = "TOTAL_TAX_PAYABLE"
+    INCOME_TAX_PAYABLE: str = "INCOME_TAX_PAYABLE"
     DIVIDENDS_PAYABLE: str = "DIVIDENDS_PAYABLE"
     OTHER_PAYABLES_AND_ACCRUALS: str = "OTHER_PAYABLES_AND_ACCRUALS"
     OTHER_FINANCIAL_LIABILITIES_CURRENT: str = "OTHER_FINANCIAL_LIABILITIES_CURRENT"
     CAPITAL_LEASE_OBLIGATIONS_CURRENT: str = "CAPITAL_LEASE_OBLIGATIONS_CURRENT"
     DEFERRED_REVENUE_CURRENT: str = "DEFERRED_REVENUE_CURRENT"
+    CURRENT_DEFERRED_LIABILITIES: str = "CURRENT_DEFERRED_LIABILITIES"
     DERIVATIVE_FINANCIAL_LIABILITIES_CURRENT: str = "DERIVATIVE_FINANCIAL_LIABILITIES_CURRENT"
     OTHER_CURRENT_LIABILITIES: str = "OTHER_CURRENT_LIABILITIES"
     TOTAL_CURRENT_LIABILITIES: str = "TOTAL_CURRENT_LIABILITIES"
-    
+
     # ==========================================
     # 📊 非流动负债 (Non-Current Liabilities)
     # ==========================================
@@ -568,16 +688,17 @@ class BalanceSheetKey:
     LONG_TERM_PAYABLES: str = "LONG_TERM_PAYABLES"
     CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT: str = "CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT"
     DEFERRED_REVENUE_NON_CURRENT: str = "DEFERRED_REVENUE_NON_CURRENT"
+    NON_CURRENT_DEFERRED_LIABILITIES: str = "NON_CURRENT_DEFERRED_LIABILITIES"
     DEFERRED_TAX_LIABILITIES: str = "DEFERRED_TAX_LIABILITIES"
     OTHER_FINANCIAL_LIABILITIES_NON_CURRENT: str = "OTHER_FINANCIAL_LIABILITIES_NON_CURRENT"
     OTHER_NON_CURRENT_LIABILITIES: str = "OTHER_NON_CURRENT_LIABILITIES"
     TOTAL_NON_CURRENT_LIABILITIES: str = "TOTAL_NON_CURRENT_LIABILITIES"
-    
+
     # ==========================================
     # 📊 总负债 (Total Liabilities)
     # ==========================================
     TOTAL_LIABILITIES: str = "TOTAL_LIABILITIES"
-    
+
     # ==========================================
     # 📊 股东权益 (Shareholders' Equity)
     # ==========================================
@@ -589,8 +710,10 @@ class BalanceSheetKey:
     TREASURY_STOCK: str = "TREASURY_STOCK"
     NONCONTROLLING_INTERESTS: str = "NONCONTROLLING_INTERESTS"
     TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT: str = "TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT"
+    COMMON_STOCK_EQUITY: str = "COMMON_STOCK_EQUITY"
     TOTAL_EQUITY_CONSOLIDATED: str = "TOTAL_EQUITY_CONSOLIDATED"
-    
+    TOTAL_EQUITY_NON_CONTROLLING_INTERESTS: str = "TOTAL_EQUITY_NON_CONTROLLING_INTERESTS"
+
     # ==========================================
     # 📊 衍生指标 (Derived Metrics)
     # ==========================================
@@ -601,14 +724,14 @@ class BalanceSheetKey:
     TOTAL_DEBT: str = "TOTAL_DEBT"
     NET_DEBT: str = "NET_DEBT"
     SHARE_ISSUED: str = "SHARE_ISSUED"
-    
+
     # ==========================================
     # 🔵 新增流动资产/负债 (New Current Items)
     # ==========================================
     NOTES_RECEIVABLE: str = "NOTES_RECEIVABLE"
     LOANS_AND_ADVANCES_CURRENT: str = "LOANS_AND_ADVANCES_CURRENT"
     CURRENT_PROVISIONS: str = "CURRENT_PROVISIONS"
-    
+
     # ==========================================
     # 🟣 新增非流动资产/负债 (New Non-Current Items)
     # ==========================================
@@ -617,7 +740,7 @@ class BalanceSheetKey:
     DEFERRED_TAX_ASSETS: str = "DEFERRED_TAX_ASSETS"
     NON_CURRENT_PROVISIONS: str = "NON_CURRENT_PROVISIONS"
     CONVERTIBLE_REDEEMABLE_PREFERRED_SHARES: str = "CONVERTIBLE_REDEEMABLE_PREFERRED_SHARES"
-    
+
     # ==========================================
     # 🟠 新增汇总及交叉验证指标 (Derived / Check Items)
     # ==========================================
@@ -633,7 +756,6 @@ class BalanceSheetKey:
     # ==========================================
     # 🟢 新增：资本开支生命周期预测 (CapEx Lifecycle)
     # ==========================================
-    PLANT_PROPERTY_EQUIPMENT_GROSS: str = "PLANT_PROPERTY_EQUIPMENT_GROSS"
     ACCUMULATED_DEPRECIATION: str = "ACCUMULATED_DEPRECIATION"
     GOODWILL_AND_OTHER_INTANGIBLE_ASSETS: str = "GOODWILL_AND_OTHER_INTANGIBLE_ASSETS"
 
@@ -647,6 +769,8 @@ class BalanceSheetKey:
     # 🟣 新增：AOCI 留存收益的底色
     # ==========================================
     ACCUMULATED_OTHER_COMPREHENSIVE_INCOME: str = "ACCUMULATED_OTHER_COMPREHENSIVE_INCOME"
+    OTHER_EQUITY_ADJUSTMENTS: str = "OTHER_EQUITY_ADJUSTMENTS"
+    GAINS_LOSSES_NOT_AFFECTING_RETAINED_EARNINGS: str = "GAINS_LOSSES_NOT_AFFECTING_RETAINED_EARNINGS"
 
     # ==========================================
     # 🔴 新增：OBB 特有字段补充 (OBB Specific Fields)
@@ -654,6 +778,9 @@ class BalanceSheetKey:
     CAPITAL_STOCK: str = "CAPITAL_STOCK"
     ORDINARY_SHARES_NUMBER: str = "ORDINARY_SHARES_NUMBER"
     TOTAL_PAYABLES_AND_ACCRUED_EXPENSES: str = "TOTAL_PAYABLES_AND_ACCRUED_EXPENSES"
+    PAYABLES: str = "PAYABLES"
+    TOTAL_CAPITALIZATION: str = "TOTAL_CAPITALIZATION"
+    CAPITAL_LEASE_OBLIGATIONS: str = "CAPITAL_LEASE_OBLIGATIONS"
 
     # ========== 向后兼容别名 (Backward Compatibility Aliases) ==========
     ASSETS: str = TOTAL_ASSETS
@@ -676,11 +803,14 @@ class BalanceSheetRecord(BaseModel):
     资产负债表字段 Pydantic 模型 Mixin
     供 StandardFinancialRecord 类继承，实现静态类型支持
     """
-    
+
     # ==========================================
     # 📊 流动资产 (Current Assets)
     # ==========================================
     CASH_AND_CASH_EQUIVALENTS: Optional[float] = None
+    CASH_ONLY: Optional[float] = None
+    CASH_EQUIVALENTS: Optional[float] = None
+    CASH_CASH_EQUIV_ST_INVEST: Optional[float] = None
     RESTRICTED_CASH: Optional[float] = None
     SHORT_TERM_DEPOSITS: Optional[float] = None
     LONG_TERM_DEPOSITS: Optional[float] = None
@@ -689,26 +819,37 @@ class BalanceSheetRecord(BaseModel):
     FINANCIAL_ASSETS_AT_FAIR_VALUE_CURRENT: Optional[float] = None
     OTHER_FINANCIAL_ASSETS_CURRENT: Optional[float] = None
     ACCOUNTS_RECEIVABLE: Optional[float] = None
+    NET_RECEIVABLES: Optional[float] = None
     RECEIVABLES_FROM_RELATED_PARTIES: Optional[float] = None
     PREPAYMENTS: Optional[float] = None
     PREPAYMENTS_AND_OTHER_RECEIVABLES: Optional[float] = None
     INVENTORIES: Optional[float] = None
+    RAW_MATERIALS: Optional[float] = None
+    WORK_IN_PROCESS: Optional[float] = None
+    FINISHED_GOODS: Optional[float] = None
     HELD_TO_MATURITY_INVESTMENTS_CURRENT: Optional[float] = None
     ASSETS_HELD_FOR_SALE: Optional[float] = None
     DERIVATIVE_FINANCIAL_ASSETS_CURRENT: Optional[float] = None
     OTHER_CURRENT_ASSETS: Optional[float] = None
     TOTAL_CURRENT_ASSETS: Optional[float] = None
-    
+
     # ==========================================
     # 📊 非流动资产 (Non-Current Assets)
     # ==========================================
     PLANT_PROPERTY_EQUIPMENT_NET: Optional[float] = None
+    PLANT_PROPERTY_EQUIPMENT_GROSS: Optional[float] = None
+    LAND_AND_IMPROVEMENTS: Optional[float] = None
+    BUILDINGS_AND_IMPROVEMENTS: Optional[float] = None
+    MACHINERY_FURNITURE_EQUIPMENT: Optional[float] = None
+    OTHER_PROPERTIES: Optional[float] = None
     INVESTMENT_PROPERTIES: Optional[float] = None
     LAND_USE_RIGHTS: Optional[float] = None
     CONSTRUCTION_IN_PROGRESS: Optional[float] = None
     GOODWILL: Optional[float] = None
     INTANGIBLE_ASSETS: Optional[float] = None
     INTERESTS_IN_ASSOCIATES: Optional[float] = None
+    LONG_TERM_EQUITY_INVESTMENT: Optional[float] = None
+    TRADING_FINANCIAL_ASSETS_NON_CURRENT: Optional[float] = None
     INTERESTS_IN_JOINT_VENTURES: Optional[float] = None
     REDEEMABLE_INSTRUMENTS_IN_ASSOCIATES: Optional[float] = None
     AVAILABLE_FOR_SALE_INVESTMENTS: Optional[float] = None
@@ -718,7 +859,7 @@ class BalanceSheetRecord(BaseModel):
     OTHER_NON_CURRENT_ASSETS: Optional[float] = None
     OTHER_NON_CURRENT_ASSETS_ITEMS: Optional[float] = None
     TOTAL_NON_CURRENT_ASSETS: Optional[float] = None
-    
+
     # ==========================================
     # 📊 资产总计 (Total Assets)
     # ==========================================
@@ -726,24 +867,29 @@ class BalanceSheetRecord(BaseModel):
     NET_WORKING_CAPITAL: Optional[float] = None
     TOTAL_EQUITY_AND_NON_CURRENT_LIABILITIES: Optional[float] = None
     TOTAL_EQUITY_AND_LIABILITIES: Optional[float] = None
-    
+
     # ==========================================
     # 📊 流动负债 (Current Liabilities)
     # ==========================================
     SHORT_TERM_DEBT: Optional[float] = None
+    COMMERCIAL_PAPER: Optional[float] = None
+    OTHER_CURRENT_BORROWINGS: Optional[float] = None
+    CURRENT_DEBT_AND_LEASE_OBLIG: Optional[float] = None
     NOTES_PAYABLE: Optional[float] = None
     ACCOUNTS_PAYABLE: Optional[float] = None
     PAYABLES_TO_RELATED_PARTIES_CURRENT: Optional[float] = None
-    TAX_PAYABLE: Optional[float] = None
+    TOTAL_TAX_PAYABLE: Optional[float] = None
+    INCOME_TAX_PAYABLE: Optional[float] = None
     DIVIDENDS_PAYABLE: Optional[float] = None
     OTHER_PAYABLES_AND_ACCRUALS: Optional[float] = None
     OTHER_FINANCIAL_LIABILITIES_CURRENT: Optional[float] = None
     CAPITAL_LEASE_OBLIGATIONS_CURRENT: Optional[float] = None
     DEFERRED_REVENUE_CURRENT: Optional[float] = None
+    CURRENT_DEFERRED_LIABILITIES: Optional[float] = None
     DERIVATIVE_FINANCIAL_LIABILITIES_CURRENT: Optional[float] = None
     OTHER_CURRENT_LIABILITIES: Optional[float] = None
     TOTAL_CURRENT_LIABILITIES: Optional[float] = None
-    
+
     # ==========================================
     # 📊 非流动负债 (Non-Current Liabilities)
     # ==========================================
@@ -752,16 +898,17 @@ class BalanceSheetRecord(BaseModel):
     LONG_TERM_PAYABLES: Optional[float] = None
     CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT: Optional[float] = None
     DEFERRED_REVENUE_NON_CURRENT: Optional[float] = None
+    NON_CURRENT_DEFERRED_LIABILITIES: Optional[float] = None
     DEFERRED_TAX_LIABILITIES: Optional[float] = None
     OTHER_FINANCIAL_LIABILITIES_NON_CURRENT: Optional[float] = None
     OTHER_NON_CURRENT_LIABILITIES: Optional[float] = None
     TOTAL_NON_CURRENT_LIABILITIES: Optional[float] = None
-    
+
     # ==========================================
     # 📊 总负债 (Total Liabilities)
     # ==========================================
     TOTAL_LIABILITIES: Optional[float] = None
-    
+
     # ==========================================
     # 📊 股东权益 (Shareholders' Equity)
     # ==========================================
@@ -773,8 +920,10 @@ class BalanceSheetRecord(BaseModel):
     TREASURY_STOCK: Optional[float] = None
     NONCONTROLLING_INTERESTS: Optional[float] = None
     TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT: Optional[float] = None
+    COMMON_STOCK_EQUITY: Optional[float] = None
     TOTAL_EQUITY_CONSOLIDATED: Optional[float] = None
-    
+    TOTAL_EQUITY_NON_CONTROLLING_INTERESTS: Optional[float] = None
+
     # ==========================================
     # 📊 衍生指标 (Derived Metrics)
     # ==========================================
@@ -785,14 +934,14 @@ class BalanceSheetRecord(BaseModel):
     TOTAL_DEBT: Optional[float] = None
     NET_DEBT: Optional[float] = None
     SHARE_ISSUED: Optional[float] = None
-    
+
     # ==========================================
     # 🔵 新增流动资产/负债 (New Current Items)
     # ==========================================
     NOTES_RECEIVABLE: Optional[float] = None
     LOANS_AND_ADVANCES_CURRENT: Optional[float] = None
     CURRENT_PROVISIONS: Optional[float] = None
-    
+
     # ==========================================
     # 🟣 新增非流动资产/负债 (New Non-Current Items)
     # ==========================================
@@ -801,7 +950,7 @@ class BalanceSheetRecord(BaseModel):
     DEFERRED_TAX_ASSETS: Optional[float] = None
     NON_CURRENT_PROVISIONS: Optional[float] = None
     CONVERTIBLE_REDEEMABLE_PREFERRED_SHARES: Optional[float] = None
-    
+
     # ==========================================
     # 🟠 新增汇总及交叉验证指标 (Derived / Check Items)
     # ==========================================
@@ -817,7 +966,6 @@ class BalanceSheetRecord(BaseModel):
     # ==========================================
     # 🟢 新增：资本开支生命周期预测 (CapEx Lifecycle)
     # ==========================================
-    PLANT_PROPERTY_EQUIPMENT_GROSS: Optional[float] = None
     ACCUMULATED_DEPRECIATION: Optional[float] = None
     GOODWILL_AND_OTHER_INTANGIBLE_ASSETS: Optional[float] = None
 
@@ -831,6 +979,8 @@ class BalanceSheetRecord(BaseModel):
     # 🟣 新增：AOCI 留存收益的底色
     # ==========================================
     ACCUMULATED_OTHER_COMPREHENSIVE_INCOME: Optional[float] = None
+    OTHER_EQUITY_ADJUSTMENTS: Optional[float] = None
+    GAINS_LOSSES_NOT_AFFECTING_RETAINED_EARNINGS: Optional[float] = None
 
     # ==========================================
     # 🔴 新增：OBB 特有字段补充 (OBB Specific Fields)
@@ -838,4 +988,6 @@ class BalanceSheetRecord(BaseModel):
     CAPITAL_STOCK: Optional[float] = None
     ORDINARY_SHARES_NUMBER: Optional[float] = None
     TOTAL_PAYABLES_AND_ACCRUED_EXPENSES: Optional[float] = None
-
+    PAYABLES: Optional[float] = None
+    TOTAL_CAPITALIZATION: Optional[float] = None
+    CAPITAL_LEASE_OBLIGATIONS: Optional[float] = None
