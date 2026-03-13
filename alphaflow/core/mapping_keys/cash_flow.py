@@ -48,21 +48,39 @@ CASH_FLOW_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["折旧"]
     },
     "DEPRECIATION_AND_AMORTIZATION": {
-        "obb": ["depreciation_and_amortization", "depreciation_amortization_depletion"],
-        "akshare": ["折旧和摊销", "折旧摊销", "加:折旧及摊销"]  # ✅ 合并港股格式
+        "obb": ["depreciation_and_amortization"],
+        "akshare": ["折旧和摊销", "折旧摊销", "加:折旧及摊销"]  # 纠正 1:1 违规，移出 depletion
+    },
+    "DEPRECIATION_AMORTIZATION_DEPLETION": {
+        "obb": ["depreciation_amortization_depletion"],
+        "akshare": []  # 新增：包含耗竭（Depletion，多见于矿业油气）
     },
     "DEFERRED_INCOME_TAX": {
-        "obb": ["deferred_income_tax", "deferred_tax"],
-        "akshare": ["递延所得税"]
+        "obb": ["deferred_income_tax"],
+        "akshare": ["递延所得税"]  # 纠正 1:1 违规，移出 deferred_tax
+    },
+    "DEFERRED_TAX": {
+        "obb": ["deferred_tax"],
+        "akshare": []  # 新增：独立建键，物理接纳 API 冗余数据
     },
     "STOCK_BASED_COMPENSATION": {
         "obb": ["stock_based_compensation"],
         "akshare": ["股份支付", "股权激励费用"]
     },
-    "CF_ADJUSTMENT_IMPAIRMENT_AND_PROVISION": {
-        # 🚀 新增：减值拨备调整
-        "obb": [],
+    "ASSET_IMPAIRMENT_CHARGE": {
+        # 更名复用：原 CF_ADJUSTMENT_IMPAIRMENT_AND_PROVISION 更名，对齐 AkShare 拨备调整
+        "obb": ["asset_impairment_charge"],
         "akshare": ["加:减值及拨备"]
+    },
+    "GAIN_LOSS_ON_INVESTMENT_SECURITIES": {
+        # 新增：投资证券损益（已实现），核心 OCF 调整项
+        "obb": ["gain_loss_on_investment_securities"],
+        "akshare": []
+    },
+    "UNREALIZED_GAIN_LOSS_ON_INVESTMENT_SECURITIES": {
+        # 新增：未实现投资证券损益，核心 OCF 调整项
+        "obb": ["unrealized_gain_loss_on_investment_securities"],
+        "akshare": []
     },
     "CF_ADJUSTMENT_INTEREST_EXPENSE": {
         # 🚀 新增：加回利息
@@ -165,6 +183,16 @@ CASH_FLOW_MAPPING: Dict[str, Dict[str, List[str]]] = {
     "CHANGE_IN_WORKING_CAPITAL": {
         "obb": ["change_in_working_capital"],
         "akshare": ["营运资金变动", "经营性应收项目变动"]
+    },
+    "CHANGE_IN_INCOME_TAX_PAYABLE": {
+        # 新增：营运资本中的所得税应付变动
+        "obb": ["change_in_income_tax_payable"],
+        "akshare": []
+    },
+    "CHANGE_IN_TAX_PAYABLE": {
+        # 新增：营运资本中的总税项应付变动，独立建键以满足 1:1
+        "obb": ["change_in_tax_payable"],
+        "akshare": []
     },
 
     # --- 1.3 经营活动税息与净额 (Taxes, Interest & Net Operating CF) ---
@@ -320,9 +348,9 @@ CASH_FLOW_MAPPING: Dict[str, Dict[str, List[str]]] = {
     # 📊 三、融资活动现金流 (Financing Cash Flow)
     # ==========================================
     "PROCEEDS_FROM_BORROWINGS": {
-        # 🚀 新增：借款毛流入
-        "obb": [],
-        "akshare": ["新增借款"]
+        # 修正：借款毛流入，跨市场复用（issuance_of_debt 从独立映射移入）
+        "obb": ["issuance_of_debt"],
+        "akshare": ["新增借款", "借款收到的现金"]  # 从 NET_ISSUANCE_PAYMENTS_OF_DEBT 移入
     },
     "REPAYMENT_OF_DEBT": {
         "obb": ["repayment_of_debt"],
@@ -338,12 +366,22 @@ CASH_FLOW_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "obb": [],
         "akshare": ["赎回债券"]
     },
+    "LONG_TERM_DEBT_ISSUANCE": {
+        # 新增：纯发行（流入），区别于 Net Issuance
+        "obb": ["long_term_debt_issuance"],
+        "akshare": []
+    },
     "LONG_TERM_DEBT_PAYMENTS": {
         "obb": ["long_term_debt_payments"],
         "akshare": []
     },
     "NET_LONG_TERM_DEBT_ISSUANCE": {
         "obb": ["net_long_term_debt_issuance"],
+        "akshare": []
+    },
+    "SHORT_TERM_DEBT_ISSUANCE": {
+        # 新增：短期债务发行（纯流入）
+        "obb": ["short_term_debt_issuance"],
         "akshare": []
     },
     "SHORT_TERM_DEBT_PAYMENTS": {
@@ -356,7 +394,7 @@ CASH_FLOW_MAPPING: Dict[str, Dict[str, List[str]]] = {
     },
     "NET_ISSUANCE_PAYMENTS_OF_DEBT": {
         "obb": ["net_issuance_payments_of_debt"],
-        "akshare": ["债务净变动", "借款收到的现金"]
+        "akshare": ["债务净变动"]  # 踢出 "借款收到的现金"（毛流入不能放在净变动里）
     },
     "PROCEEDS_FROM_CAPITAL_CONTRIBUTIONS": {
         # 🚀 新增：吸收投资
@@ -478,9 +516,13 @@ class CashFlowKey:
     OPERATING_GAINS_LOSSES: str = "OPERATING_GAINS_LOSSES"
     DEPRECIATION: str = "DEPRECIATION"
     DEPRECIATION_AND_AMORTIZATION: str = "DEPRECIATION_AND_AMORTIZATION"
+    DEPRECIATION_AMORTIZATION_DEPLETION: str = "DEPRECIATION_AMORTIZATION_DEPLETION"  # 新增
     DEFERRED_INCOME_TAX: str = "DEFERRED_INCOME_TAX"
+    DEFERRED_TAX: str = "DEFERRED_TAX"  # 新增
     STOCK_BASED_COMPENSATION: str = "STOCK_BASED_COMPENSATION"
-    CF_ADJUSTMENT_IMPAIRMENT_AND_PROVISION: str = "CF_ADJUSTMENT_IMPAIRMENT_AND_PROVISION"  # 🚀 新增
+    ASSET_IMPAIRMENT_CHARGE: str = "ASSET_IMPAIRMENT_CHARGE"  # 更名复用
+    GAIN_LOSS_ON_INVESTMENT_SECURITIES: str = "GAIN_LOSS_ON_INVESTMENT_SECURITIES"  # 新增
+    UNREALIZED_GAIN_LOSS_ON_INVESTMENT_SECURITIES: str = "UNREALIZED_GAIN_LOSS_ON_INVESTMENT_SECURITIES"  # 新增
     CF_ADJUSTMENT_INTEREST_EXPENSE: str = "CF_ADJUSTMENT_INTEREST_EXPENSE"  # 🚀 新增
     CF_ADJUSTMENT_INTEREST_INCOME: str = "CF_ADJUSTMENT_INTEREST_INCOME"  # 🚀 新增
     CF_ADJUSTMENT_INVESTMENT_INCOME: str = "CF_ADJUSTMENT_INVESTMENT_INCOME"  # 🚀 新增
@@ -506,6 +548,8 @@ class CashFlowKey:
     CHANGE_IN_OTHER_CURRENT_LIABILITIES: str = "CHANGE_IN_OTHER_CURRENT_LIABILITIES"
     CHANGE_IN_OTHER_WORKING_CAPITAL: str = "CHANGE_IN_OTHER_WORKING_CAPITAL"
     CHANGE_IN_WORKING_CAPITAL: str = "CHANGE_IN_WORKING_CAPITAL"
+    CHANGE_IN_INCOME_TAX_PAYABLE: str = "CHANGE_IN_INCOME_TAX_PAYABLE"  # 新增
+    CHANGE_IN_TAX_PAYABLE: str = "CHANGE_IN_TAX_PAYABLE"  # 新增
 
     # --- 1.3 经营活动税息与净额 (Taxes, Interest & Net Operating CF) ---
     CASH_GENERATED_FROM_OPERATIONS: str = "CASH_GENERATED_FROM_OPERATIONS"  # 🚀 新增
@@ -549,8 +593,10 @@ class CashFlowKey:
     REPAYMENT_OF_DEBT: str = "REPAYMENT_OF_DEBT"
     PROCEEDS_FROM_ISSUANCE_OF_BONDS: str = "PROCEEDS_FROM_ISSUANCE_OF_BONDS"  # 🚀 新增
     REPAYMENT_OF_BONDS: str = "REPAYMENT_OF_BONDS"  # 🚀 新增
+    LONG_TERM_DEBT_ISSUANCE: str = "LONG_TERM_DEBT_ISSUANCE"  # 新增
     LONG_TERM_DEBT_PAYMENTS: str = "LONG_TERM_DEBT_PAYMENTS"
     NET_LONG_TERM_DEBT_ISSUANCE: str = "NET_LONG_TERM_DEBT_ISSUANCE"
+    SHORT_TERM_DEBT_ISSUANCE: str = "SHORT_TERM_DEBT_ISSUANCE"  # 新增
     SHORT_TERM_DEBT_PAYMENTS: str = "SHORT_TERM_DEBT_PAYMENTS"
     NET_SHORT_TERM_DEBT_ISSUANCE: str = "NET_SHORT_TERM_DEBT_ISSUANCE"
     NET_ISSUANCE_PAYMENTS_OF_DEBT: str = "NET_ISSUANCE_PAYMENTS_OF_DEBT"
@@ -613,9 +659,13 @@ class CashFlowRecord(BaseModel):
     OPERATING_GAINS_LOSSES: Optional[float] = None  # 经营损益
     DEPRECIATION: Optional[float] = None  # 折旧
     DEPRECIATION_AND_AMORTIZATION: Optional[float] = None  # 折旧和摊销
+    DEPRECIATION_AMORTIZATION_DEPLETION: Optional[float] = None  # 折旧、摊销和耗竭
     DEFERRED_INCOME_TAX: Optional[float] = None  # 递延所得税
+    DEFERRED_TAX: Optional[float] = None  # 递延税项
     STOCK_BASED_COMPENSATION: Optional[float] = None  # 股份支付/股权激励
-    CF_ADJUSTMENT_IMPAIRMENT_AND_PROVISION: Optional[float] = None  # 加:减值及拨备
+    ASSET_IMPAIRMENT_CHARGE: Optional[float] = None  # 资产减值费用
+    GAIN_LOSS_ON_INVESTMENT_SECURITIES: Optional[float] = None  # 投资证券损益（已实现）
+    UNREALIZED_GAIN_LOSS_ON_INVESTMENT_SECURITIES: Optional[float] = None  # 未实现投资证券损益
     CF_ADJUSTMENT_INTEREST_EXPENSE: Optional[float] = None  # 加:利息支出
     CF_ADJUSTMENT_INTEREST_INCOME: Optional[float] = None  # 减:利息收入
     CF_ADJUSTMENT_INVESTMENT_INCOME: Optional[float] = None  # 减:投资收益
@@ -641,6 +691,8 @@ class CashFlowRecord(BaseModel):
     CHANGE_IN_OTHER_CURRENT_LIABILITIES: Optional[float] = None  # 其他流动负债变动
     CHANGE_IN_OTHER_WORKING_CAPITAL: Optional[float] = None  # 营运资本变动其他项目
     CHANGE_IN_WORKING_CAPITAL: Optional[float] = None  # 营运资金变动总计
+    CHANGE_IN_INCOME_TAX_PAYABLE: Optional[float] = None  # 营运资本-所得税应付变动
+    CHANGE_IN_TAX_PAYABLE: Optional[float] = None  # 营运资本-总税项应付变动
 
     # --- 1.3 经营活动税息与净额 (Taxes, Interest & Net Operating CF) ---
     CASH_GENERATED_FROM_OPERATIONS: Optional[float] = None  # 经营产生现金 (未扣税息前)
@@ -684,8 +736,10 @@ class CashFlowRecord(BaseModel):
     REPAYMENT_OF_DEBT: Optional[float] = None  # 偿还借款
     PROCEEDS_FROM_ISSUANCE_OF_BONDS: Optional[float] = None  # 发行债券所得
     REPAYMENT_OF_BONDS: Optional[float] = None  # 赎回债券
+    LONG_TERM_DEBT_ISSUANCE: Optional[float] = None  # 长期债务发行（纯流入）
     LONG_TERM_DEBT_PAYMENTS: Optional[float] = None  # 长期债务偿还
     NET_LONG_TERM_DEBT_ISSUANCE: Optional[float] = None  # 长期债务净发行
+    SHORT_TERM_DEBT_ISSUANCE: Optional[float] = None  # 短期债务发行（纯流入）
     SHORT_TERM_DEBT_PAYMENTS: Optional[float] = None  # 短期债务偿还
     NET_SHORT_TERM_DEBT_ISSUANCE: Optional[float] = None  # 短期债务净发行
     NET_ISSUANCE_PAYMENTS_OF_DEBT: Optional[float] = None  # 债务净变动
