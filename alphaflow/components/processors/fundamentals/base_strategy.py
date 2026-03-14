@@ -12,7 +12,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from alphaflow.core.data_utils import MarketType
+from alphaflow.core.utils import MarketType
 
 
 # ==========================================

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Set, Optional
 # 假设你的 BaseProcessor 定义在 alphaflow.core.base 中
 from alphaflow.core.base import BaseProcessor
 from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack
-from alphaflow.core.data_utils import FIELD_CHAINS
+from alphaflow.core.utils import FIELD_CHAINS
 
 # ==========================================
 # 1. 声明式配置 (严格的边界正则)

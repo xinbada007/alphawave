@@ -10,7 +10,7 @@ Fundamental Keys - 财务数据键名常量
 """
 
 # 从 Core 层导入全域词汇表
-from alphaflow.core.data_utils import ProfileKey, ConsensusKey, DividendKey, ShareStatsKey
+from alphaflow.core.utils import ProfileKey, ConsensusKey, DividendKey, ShareStatsKey
 
 
 # ==========================================

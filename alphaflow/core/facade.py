@@ -17,11 +17,13 @@ ResearchPack Facade - 数据防腐层
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+from alphaflow.core.keys import Key
 
 import pandas as pd
 
-from alphaflow.core.data_utils import (
+from alphaflow.core.utils.data_utils import (
     MarketType,
     MetaKey,
     ReportPeriod,
@@ -29,8 +31,8 @@ from alphaflow.core.data_utils import (
     get_field_value,
     get_market_type,
 )
-from alphaflow.core.financial_math import calc_ttm_stitch
-from alphaflow.core.schema import ResearchPack
+from alphaflow.core.utils.financial_math import calc_ttm_stitch
+from alphaflow.core.schema.models import ResearchPack
 
 
 # ==========================================
@@ -201,32 +203,26 @@ class ResearchPackFacade:
     
     def get_ttm_value(
         self,
-        field_func: Callable[[Dict], Optional[float]],
+        # 🚀 柔性签名：允许传入 Key 字符串，也向下兼容传入计算函数 (如 FCF)
+        field_key_or_func: Union[str, Callable[[Dict], Optional[float]]],
         stmt_type: StatementType = StatementType.INCOME
     ) -> Optional[float]:
         """
         计算滚动12个月 (TTM) 值
-        
-        这是核心解耦点：内部自动组装 q_series 和 a_series，
-        调用 financial_math.calc_ttm_stitch 完成计算。
-        
-        Args:
-            field_func: 字段提取函数，接收 Dict 返回 Optional[float]
-            stmt_type: 报表类型 (默认 income)
-        
-        Returns:
-            TTM 值，如果无法计算则返回 None
         """
-        # 1. 获取季度和年度数据
         stmt_key = self.STMT_KEY_MAP[stmt_type]
-        
         q_key = f"q_{stmt_key}{self._q_suffix}"
         a_key = f"a_{stmt_key}"
         
         q_series = self._quarterly_series.get(q_key, [])
-        a_series = self._annual_series.get(a_key, [])
+        a_series = self._annual_series.get(a_key,[])
         
-        # 2. 调用 calc_ttm_stitch
+        # 智能分发提取器
+        if isinstance(field_key_or_func, str):
+            field_func = lambda x: get_field_value(x, field_key_or_func)
+        else:
+            field_func = field_key_or_func
+            
         return calc_ttm_stitch(
             q_series=q_series,
             a_series=a_series,
@@ -318,6 +314,28 @@ class ResearchPackFacade:
     def extra(self) -> Dict[str, Any]:
         """直接访问 extra 字典"""
         return self.pack.extra or {}
+
+    # ======================================
+    # 领域感知与语境访问接口 (Semantic Access API)
+    # ======================================
+    def get_metric_value(self, key: str) -> Optional[Any]:
+        """显式获取：市场快照/计算指标 (对应 pack.market_metrics)"""
+        return get_field_value(self.market_metrics, key)
+        
+    def get_profile_value(self, key: str) -> Optional[Any]:
+        """显式获取：公司档案/元数据 (对应 pack.fundamentals['profile'])"""
+        profile_dict = self.fundamentals.get("profile", {})
+        return get_field_value(profile_dict, key)
+        
+    def get_estimate_value(self, key: str) -> Optional[Any]:
+        """显式获取：分析师共识预测 (对应 pack.fundamentals['estimates'])"""
+        estimates_dict = self.fundamentals.get("estimates", {})
+        return get_field_value(estimates_dict, key)
+        
+    def get_share_stats_value(self, key: str) -> Optional[Any]:
+        """显式获取：股本结构与做空数据 (对应 pack.fundamentals['share_stats'])"""
+        share_stats_dict = self.fundamentals.get("share_stats", {})
+        return get_field_value(share_stats_dict, key)
 
 
 # ==========================================

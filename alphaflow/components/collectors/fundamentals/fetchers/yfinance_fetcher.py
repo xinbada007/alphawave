@@ -11,8 +11,8 @@ import pandas as pd
 import yfinance as yf
 
 from .base import BaseFetcher
-from alphaflow.core.adapters import DynamicFinancialAdapter
-from alphaflow.core.data_utils import ReportPeriod
+from alphaflow.core.acl.core_adapter import DynamicFinancialAdapter
+from alphaflow.core.utils import ReportPeriod
 
 
 class YFinanceFetcher(BaseFetcher):

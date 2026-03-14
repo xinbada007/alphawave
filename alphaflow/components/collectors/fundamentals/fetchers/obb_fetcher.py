@@ -11,9 +11,9 @@ from openbb import obb
 import pandas as pd
 
 from .base import BaseFetcher
-from alphaflow.core.adapters import DynamicFinancialAdapter
-from alphaflow.core.data_utils import ReportPeriod
-from alphaflow.core.transform_adapter import _tx_filter_insider_trading
+from alphaflow.core.acl.core_adapter import DynamicFinancialAdapter
+from alphaflow.core.utils import ReportPeriod
+from alphaflow.core.acl.transformers import _tx_filter_insider_trading
 
 # 全局绕过 Mypy 检查
 obb_any: Any = obb

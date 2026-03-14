@@ -262,3 +262,17 @@ def _tx_format_date(val: Any, raw: Dict[str, Any]) -> Optional[str]:
         return pd.to_datetime(val).strftime("%Y-%m-%d")
     except Exception:
         return str(val)  # 解析失败则保留原样，由 Pydantic 决定生死
+
+
+def _tx_detect_cny_hkd_mismatch(val: Any, raw: Dict[str, Any]) -> bool:
+    """
+    [Row-Level Feature] 嗅探港股的计价货币错配特征
+    利用原始未被标准化的键名，侦测是否同时存在港元市值与人民币财报。
+    """
+    # 嗅探市值计价 (HKD)
+    has_hkd_cap = "总市值(港元)" in raw or "港股市值(港元)" in raw
+    
+    # 嗅探财报计价 (CNY)
+    has_cny_val = "基本每股收益(元)" in raw or "每股净资产(元)" in raw
+    
+    return has_hkd_cap and has_cny_val

@@ -15,17 +15,17 @@ from typing import Any, Dict
 from alphaflow.core.context import GlobalContext
 
 # 🚀 Meta 骨架：系统元数据字段 (第一顺位，确保基础字段存在)
-from alphaflow.core.mapping_keys.meta import MetaRecord
+from alphaflow.core.acl.mappings.meta import MetaRecord
 
 # 🚀 业务血肉：财务报表字段
-from alphaflow.core.mapping_keys.income_statement import IncomeStatementRecord
-from alphaflow.core.mapping_keys.balance_sheet import BalanceSheetRecord
-from alphaflow.core.mapping_keys.cash_flow import CashFlowRecord
-from alphaflow.core.mapping_keys.share_stats import ShareStatsRecord
-from alphaflow.core.mapping_keys.profile import ProfileRecord
-from alphaflow.core.mapping_keys.estimates import EstimatesRecord
-from alphaflow.core.mapping_keys.metrics import MetricsRecord
-from alphaflow.core.mapping_keys.akshare_analysis import AkShareAnalysisRecord
+from alphaflow.core.acl.mappings.income_statement import IncomeStatementRecord
+from alphaflow.core.acl.mappings.balance_sheet import BalanceSheetRecord
+from alphaflow.core.acl.mappings.cash_flow import CashFlowRecord
+from alphaflow.core.acl.mappings.share_stats import ShareStatsRecord
+from alphaflow.core.acl.mappings.profile import ProfileRecord
+from alphaflow.core.acl.mappings.estimates import EstimatesRecord
+from alphaflow.core.acl.mappings.metrics import MetricsRecord
+from alphaflow.core.acl.mappings.akshare_analysis import AkShareAnalysisRecord
 
 
 class StandardFinancialRecord(

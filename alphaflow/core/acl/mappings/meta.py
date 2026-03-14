@@ -1,18 +1,42 @@
 """
 系统核心元数据映射契约 (Meta Domain)
 =====================================
-三位一体：MAPPING + Key Mixin + Record Mixin
+三位一体：MAPPING + Key + Record Mixin
 消除硬编码，将元数据提取逻辑归一化
+
+设计原则：
+- 本文件是纯净的原子定义层，无任何业务逻辑
+- MetaKey 直接在此定义，不依赖任何外部模块
+- 作为 data_utils.py 的上游，打破循环依赖
 """
 
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
-from alphaflow.core.transform_adapter import _tx_format_date
-from alphaflow.core.mapping_keys.enums import ReportPeriod
+from alphaflow.core.acl.transformers import _tx_format_date
+from alphaflow.core.acl.mappings.enums import ReportPeriod
 
 
 # ==========================================
-# 1. 映射字典 (Mapping) - Adapter 使用
+# 1. 报表类型方言映射 (Value Translation)
+# ==========================================
+
+# AkShare 编码 -> 内部标准枚举
+AKSHARE_DATE_TYPE_MAP: Dict[str, ReportPeriod] = {
+    "001": ReportPeriod.ANNUAL,        # 年报 (12个月)
+    "002": ReportPeriod.SEMIANNUAL,    # 中报 (6个月)
+    "003": ReportPeriod.QUARTERLY,     # 一季报 (3个月)
+    "004": ReportPeriod.NINE_MONTHS,   # 三季报 (9个月)
+}
+
+# OBB 字符串 -> 内部标准枚举
+OBB_REPORT_TYPE_MAP: Dict[str, ReportPeriod] = {
+    "annual": ReportPeriod.ANNUAL,
+    "quarter": ReportPeriod.QUARTERLY,
+}
+
+
+# ==========================================
+# 2. 字段映射字典 (Field Mapping) - Adapter 使用
 # ==========================================
 META_MAPPING: Dict[str, Dict[str, Any]] = {
     "PERIOD_ENDING": {
@@ -43,11 +67,19 @@ META_MAPPING: Dict[str, Dict[str, Any]] = {
 
 
 # ==========================================
-# 2. 键名常量 (Key Mixin) - data_utils 继承
+# 2. 键名常量 (MetaKey) - 纯净原子定义
 # ==========================================
-class MetaKeyMixin:
-    """元数据常量，供 data_utils.py 中的 MetaKey 继承"""
+class MetaKey:
+    """
+    系统元数据/日期字段常量 (统一大写风格)
+    
+    设计哲学：
+    - 单点真理源：此处是唯一的常量定义处
+    - 零依赖：不继承任何 Mixin，纯净字符串定义
+    - 上游定义：作为 data_utils.py 的上游，打破循环依赖
+    """
     PERIOD_ENDING: str = "PERIOD_ENDING"
+    REPORT_DATE: str = "REPORT_DATE"
     REPORT_TYPE: str = "REPORT_TYPE"
     IS_CUMULATIVE: str = "IS_CUMULATIVE"
     START_DATE: str = "START_DATE"
