@@ -5,8 +5,8 @@ Helpers - 辅助函数模块
 from typing import Any, Dict, Optional
 import asyncio
 import akshare as ak  # type: ignore
-from alphaflow.core.data_utils import MarketType
-from alphaflow.core.mapping_keys.metrics import MetricsKey
+from alphaflow.core.utils import MarketType
+from alphaflow.core.keys import Key
 
 
 # ==========================================
@@ -27,7 +27,8 @@ async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[
         if from_currency == "HKD":
             # 百度源实时行情 - HKD/CNY
             df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
-            subset = df[df["名称"].str.contains("港元", na=False)]
+            # 修复：使用"港币"而非"港元"，同时检查代码列作为备选
+            subset = df[df["名称"].str.contains("港币", na=False) | df["代码"].str.contains("HKD", na=False)]
             if not subset.empty:
                 # 接口返回的是 CNY/HKD (1人民币兑多少港元)
                 cny_to_hkd = float(subset.iloc[0]["最新价"])
@@ -36,7 +37,8 @@ async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[
         elif from_currency == "USD":
             # 百度源实时行情 - USD/CNY
             df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
-            subset = df[df["名称"].str.contains("美元", na=False)]
+            # 同时检查名称和代码列，更加健壮
+            subset = df[df["名称"].str.contains("美元", na=False) | df["代码"].str.contains("USD", na=False)]
             if not subset.empty:
                 # 接口返回的是 CNY/USD (1人民币兑多少美元)
                 cny_to_usd = float(subset.iloc[0]["最新价"])
@@ -89,22 +91,13 @@ def audit_currency_context(
         return audit_report
 
     # =========================================================
-    # 第一层：元数据标签审计 (Metadata Audit) - 针对 AkShare/港股最准
-    # 使用 MetricsKey 常量，享受强类型检测
+    # 第一层：元数据标签审计 (Metadata Audit) - 消费 ACL 提取的特征
     # =========================================================
-    # 检查标准字段是否存在
-    # MARKET_CAP: 市场本币市值（港股=港元）
-    # HK_ONLY_MCAP: 仅 H 股部分市值
-    has_mcap_hkd = MetricsKey.MARKET_CAP in metrics or MetricsKey.HK_ONLY_MCAP in metrics
+    # 读取防腐层在数据销毁前提取的错配特征
+    is_mismatch_by_label = metrics.get(Key.metrics.IS_CNY_HKD_MISMATCH, False)
 
-    # EPS_BASIC: 基本每股收益 - 通常为人民币
-    # BOOK_VALUE: 每股净资产 - 通常为人民币
-    has_eps_cny = MetricsKey.EPS_BASIC in metrics
-    has_bps_cny = MetricsKey.BOOK_VALUE in metrics
-    # TOTAL_REVENUE: 营业总收入 - 通常不带单位，默认本币(CNY)
-
-    # 3. 判定逻辑：如果 市值是港币 AND (EPS是人民币 OR BPS是人民币)
-    if has_mcap_hkd and (has_eps_cny or has_bps_cny):
+    # 判定逻辑：必须是港股，且触发了错配特征
+    if market_type == MarketType.HK and is_mismatch_by_label:
         audit_report["is_misaligned"] = True
         audit_report["detected_gap"] = "HKD_CNY_MISMATCH_BY_LABEL"
         audit_report["reporting_currency"] = "CNY"
@@ -112,15 +105,15 @@ def audit_currency_context(
         audit_report["audit_method"] = "Metadata_Label_Check"
         
         # 给一个初始因子，后续数学审计可以微调它
-        audit_report["alignment_factor"] = 0.90 
+        audit_report["alignment_factor"] = 0.90
 
     # =========================================================
     # 第二层：数学锚点审计 (Math Audit) - 计算精确因子
-    # 使用 MetricsKey 常量，享受强类型检测
+    # 使用 Key 常量，享受强类型检测
     # =========================================================
-    market_cap = metrics.get(MetricsKey.MARKET_CAP)
-    api_pe = metrics.get(MetricsKey.PE_RATIO)
-    api_pb = metrics.get(MetricsKey.PRICE_TO_BOOK)
+    market_cap = metrics.get(Key.metrics.MARKET_CAP)
+    api_pe = metrics.get(Key.metrics.PE_RATIO)
+    api_pb = metrics.get(Key.metrics.PRICE_TO_BOOK)
     
     # TTM 数据
     ni_ttm = ttm_financials.get('net_income') if ttm_financials else None

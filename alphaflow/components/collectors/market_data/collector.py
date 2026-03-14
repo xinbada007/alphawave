@@ -12,7 +12,7 @@ from alphaflow.core.schema import (
     ResearchPack, 
     DataFrameModel
 )
-from alphaflow.core.data_utils import get_market_type, MarketType
+from alphaflow.core.utils import get_market_type, MarketType
 
 from .strategies.us_strategy import USMarketStrategy
 from .strategies.hk_strategy import HKMarketStrategy

@@ -18,7 +18,7 @@ from alphaflow.components.processors.techniques import MultiTimeframeMarketAnaly
 # 基本面蒸馏组件
 from alphaflow.components.processors.fundamentals import FundamentalDistillationAnalyzer
 
-from alphaflow.core.data_utils import (
+from alphaflow.core.utils import (
     FinKey,
     MetaKey,
     PackSlot,
@@ -26,7 +26,7 @@ from alphaflow.core.data_utils import (
     get_field_value,
 )
 from alphaflow.core.facade import ResearchPackFacade, StatementType
-from alphaflow.core.financial_math import (
+from alphaflow.core.utils import (
     get_annual_multiplier,
     get_fcf_raw,
     calculate_growth_yoy,

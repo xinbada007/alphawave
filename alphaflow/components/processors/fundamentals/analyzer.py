@@ -32,7 +32,7 @@ FundamentalDistillationAnalyzer 基本面蒸馏调度器
 
 from typing import Any, Dict, Protocol
 
-from alphaflow.core.data_utils import MarketType
+from alphaflow.core.utils import MarketType
 from alphaflow.core.facade import ResearchPackFacade
 from alphaflow.core.schema import ResearchPack
 

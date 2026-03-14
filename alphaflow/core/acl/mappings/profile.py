@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from functools import partial
 
 # 🚀 导入 transform 函数 (用于长文本截断)
-from alphaflow.core.transform_adapter import _tx_truncate_text
+from alphaflow.core.acl.transformers import _tx_truncate_text
 
 
 # ==========================================

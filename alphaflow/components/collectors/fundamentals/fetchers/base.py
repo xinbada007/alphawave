@@ -6,7 +6,7 @@ Base Fetcher - 原子数据抓取器基类
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Optional
 import pandas as pd
-from alphaflow.core.data_utils import ReportPeriod
+from alphaflow.core.utils import ReportPeriod
 
 
 class BaseFetcher(ABC):
@@ -66,7 +66,7 @@ class BaseFetcher(ABC):
         raw_data = self.post_fetch_data(task_name, raw_data)
         
         # 🚀 统一清理：移除 null/None/空字符串字段（保留 0 值）
-        from alphaflow.core.transform_adapter import clean_null_fields_batch
+        from alphaflow.core.acl.transformers import clean_null_fields_batch
         raw_data = clean_null_fields_batch(raw_data)
         
         # ==========================================

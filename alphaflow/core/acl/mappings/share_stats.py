@@ -12,7 +12,7 @@
 from typing import Any, Dict, Optional
 from pydantic import BaseModel
 # 🚀 导入 transform 函数 (用于虚拟字段)
-from alphaflow.core.transform_adapter import _tx_calc_short_interest_change
+from alphaflow.core.acl.transformers import _tx_calc_short_interest_change
 
 
 # ==========================================

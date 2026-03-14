@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 import akshare as ak  # type: ignore
 
-from alphaflow.core.adapters import DynamicFinancialAdapter
+from alphaflow.core.acl.core_adapter import DynamicFinancialAdapter
 
 
 # ==========================================

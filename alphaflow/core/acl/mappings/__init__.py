@@ -18,32 +18,32 @@
 """
 
 # 基础枚举
-from alphaflow.core.mapping_keys.enums import ReportPeriod, MarketType
+from .enums import ReportPeriod, MarketType
 
 # 元数据三位一体
-from alphaflow.core.mapping_keys.meta import (
+from .meta import (
     META_MAPPING,
-    MetaKeyMixin,
+    MetaKey,
     MetaRecord,
 )
 
 # 财务报表映射
-from alphaflow.core.mapping_keys.income_statement import (
+from .income_statement import (
     INCOME_STATEMENT_MAPPING,
     IncomeStatementKey,
     IncomeStatementRecord,
 )
-from alphaflow.core.mapping_keys.balance_sheet import (
+from .balance_sheet import (
     BALANCE_SHEET_MAPPING,
     BalanceSheetKey,
     BalanceSheetRecord,
 )
-from alphaflow.core.mapping_keys.cash_flow import (
+from .cash_flow import (
     CASH_FLOW_MAPPING,
     CashFlowKey,
     CashFlowRecord,
 )
-from alphaflow.core.mapping_keys.share_stats import (
+from .share_stats import (
     SHARE_STATS_MAPPING,
     ShareStatsKey,
     ShareStatsRecord,
@@ -55,7 +55,7 @@ __all__ = [
     "MarketType",
     # 元数据三位一体
     "META_MAPPING",
-    "MetaKeyMixin",
+    "MetaKey",
     "MetaRecord",
     # 利润表
     "INCOME_STATEMENT_MAPPING",

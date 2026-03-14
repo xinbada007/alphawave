@@ -13,8 +13,8 @@
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
-# 导入百分比归一化转换器
-from alphaflow.core.transform_adapter import _tx_normalize_pct
+# 导入百分比归一化转换器和特征提取函数
+from alphaflow.core.acl.transformers import _tx_normalize_pct, _tx_detect_cny_hkd_mismatch
 
 
 # ==========================================
@@ -298,6 +298,17 @@ METRICS_MAPPING: Dict[str, Dict[str, Any]] = {
             "transform": _tx_normalize_pct
         }
     },
+
+    # ==========================================
+    # 🤖 虚拟特征与衍生输出 (Virtual & Derived)
+    # ==========================================
+    "IS_CNY_HKD_MISMATCH": {
+        "obb": [],
+        "akshare": {
+            "aliases": [],  # 无需别名，纯靠 transform 生成
+            "transform": _tx_detect_cny_hkd_mismatch
+        }
+    },
 }
 
 
@@ -380,6 +391,13 @@ class MetricsKey:
     REV_GROWTH_QOQ: str = "REV_GROWTH_QOQ"
     NI_GROWTH_QOQ: str = "NI_GROWTH_QOQ"
 
+    # ========== 派生指标 (Runtime Derived Fields) ==========
+    MARKET_CAP_RMB: str = "MARKET_CAP_RMB"  # 汇率对齐后的市值
+    FX_RATE: str = "FX_RATE"                # 实时汇率因子
+
+    # ========== 虚拟特征 (Virtual Features) ==========
+    IS_CNY_HKD_MISMATCH: str = "IS_CNY_HKD_MISMATCH"  # 港股币种错配特征
+
 
 # ==========================================
 # 3. Pydantic 模型 Mixin (Schema Mixin)
@@ -455,3 +473,10 @@ class MetricsRecord(BaseModel):
     # 环比增长
     REV_GROWTH_QOQ: Optional[float] = None
     NI_GROWTH_QOQ: Optional[float] = None
+
+    # ========== 派生指标 (Runtime Derived Fields) ==========
+    MARKET_CAP_RMB: Optional[float] = None
+    FX_RATE: Optional[float] = None
+
+    # ========== 虚拟特征 (Virtual Features) ==========
+    IS_CNY_HKD_MISMATCH: Optional[bool] = None  # 港股币种错配特征

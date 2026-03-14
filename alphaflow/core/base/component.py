@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
-from alphaflow.core.schema import AnalysisContext, ComponentOutput
+from alphaflow.core.schema.models import AnalysisContext, ComponentOutput
 
 class BaseComponent(ABC):
     """
