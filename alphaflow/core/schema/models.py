@@ -5,6 +5,54 @@ import time
 import io
 from datetime import datetime
 
+
+# ==========================================
+# V3 架构：黑板模式与强类型视图契约
+# ==========================================
+
+class InsightRegistry(BaseModel):
+    """全局黑板：用于 CQRS 的读写视图分离"""
+    consumed_domains: Set[str] = Field(default_factory=set)
+    consumed_standard_keys: Set[str] = Field(default_factory=set)
+
+    def claim_domain(self, domain_name: str):
+        """整体屏蔽，例如 'market_data'"""
+        self.consumed_domains.add(domain_name)
+
+    def claim_standard_key(self, standard_key: str):
+        """字段级屏蔽，全局抹除例如 'NET_INCOME' 这种被提取过价值的原子字段"""
+        self.consumed_standard_keys.add(standard_key)
+
+
+class InsiderFeature(BaseModel):
+    """内部人交易特征 - 强类型输出"""
+    insider_status: str = "NEUTRAL"
+    net_shares: float = 0.0
+    net_value: float = 0.0
+    avg_price: float = 0.0
+    active_insiders: List[str] = Field(default_factory=list)
+    insider_summary: str = "No significant open-market insider activity detected."
+
+
+class DividendFeature(BaseModel):
+    """分红特征 - 强类型输出"""
+    dividend_status: str = "NO_DATA"
+    dividend_cagr: Optional[float] = None
+    consecutive_years: int = 0
+    recent_payout: Dict[str, float] = Field(default_factory=dict)
+    recent_timeline: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class DistilledFeatures(BaseModel):
+    """强类型高级特征，直供 LLM 消费，杜绝幻觉"""
+    technical: Dict[str, Any] = Field(default_factory=dict)
+    fundamental_metrics: Dict[str, float] = Field(default_factory=dict)  # MetricEngine 产出
+    fundamental_insights: Dict[str, Any] = Field(default_factory=dict)   # Extractors 产出
+    
+    # 强类型的业务洞察，彻底消灭 Dict
+    insider_insights: InsiderFeature = Field(default_factory=InsiderFeature)
+    dividend_insights: DividendFeature = Field(default_factory=DividendFeature)
+
 # --- 基础数据契约 ---
 
 
@@ -164,8 +212,9 @@ class SignalData(BaseModel):
 
 class ResearchPack(BaseModel):
     """
-    万能投研数据包。
+    万能投研数据包 V3 架构。
     设计目标：高可扩展性，支持团队成员随意塞入新维度。
+    核心升级：引入黑板模式与强类型视图，彻底解耦原始数据与 LLM 消费视图。
     """
 
     symbol: str
@@ -176,14 +225,13 @@ class ResearchPack(BaseModel):
         description="Human readable time for debugging and LLM",
     )
 
-    # 结构化数据
+    # ==========================================
+    # 1. 原始数据湖 (不可变，供画图使用)
+    # ==========================================
     market_data: Optional[DataFrameModel] = None  # OHLCV 时间序列
     market_metrics: Optional[Dict[str, Any]] = None  # 市场快照指标：市值、PE、PB、PS、EPS等
     market_data_meta: Optional[Dict[str, Any]] = None  # 市场数据元信息：provider、columns等
-    technicals: Optional[DataFrameModel] = None  # 技术指标时间序列（保留兼容性）
-    technical_summary: Optional[Dict[str, Any]] = None  # 技术面汇总（当前快照，非时间序列）
-    fundamentals: Optional[Dict[str, Any]] = Field(default_factory=lambda: {})  # 财务数据
-
+    fundamentals: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 财务数据
 
     # 非结构化/文本数据
     news: List[Dict[str, Any]] = Field(default_factory=list)
@@ -193,3 +241,14 @@ class ResearchPack(BaseModel):
 
     # 展示层
     charts: Dict[str, str] = Field(default_factory=dict)  # {"main": "http://..."}
+
+    # ==========================================
+    # 2. V3 架构核心注入 (破坏性重构)
+    # ==========================================
+    # 🗑️ DELETE: 彻底删除 technicals 和 technical_summary 弱类型字段
+    # 所有计算结果必须通过 distilled_features 强类型槽位输出
+
+    # 强类型高级特征，直供 LLM 消费
+    distilled_features: DistilledFeatures = Field(default_factory=DistilledFeatures)
+    # 黑板模式：记录数据消费审计日志
+    registry: InsightRegistry = Field(default_factory=InsightRegistry)

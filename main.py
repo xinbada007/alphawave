@@ -11,8 +11,11 @@ from alphaflow.engine.pipeline import ResearchPipeline
 from alphaflow.components.collectors.fundamentals import FundamentalCollector as FundamentalCollectorV2
 from alphaflow.components.collectors.news import NewsCollector
 
-# 导入加工与展示组件 (暂时注释)
-# from alphaflow.components.processors.technicals import TechnicalProcessor
+# V3 架构：新的 Processor 和 LLM View
+from alphaflow.components.processors.technical_processor import TechnicalProcessor
+from alphaflow.components.processors.fundamental_processor import FundamentalProcessor
+from alphaflow.core.presenters.llm_view import build_llm_view
+
 # from alphaflow.components.visualizers.charting import QuickChartVisualizer
 
 
@@ -78,27 +81,15 @@ async def main():
         global_ctx.set("PROXY", args.proxy)
         global_ctx.apply_proxy()
 
-    # 2. 构建多维度投研管道
-    # 架构理念：Collector 链式调用，不断丰富 ResearchPack 的维度
+    # 2. 构建多维度投研管道 (V3 架构)
     pipeline = ResearchPipeline(context)
-
     (
-        pipeline.add_step(
-            # MarketDataCollector("MarketDataFetcher", config={"provider": "yfinance"})
-            MarketDataCollectorV2("MarketDataFetcher_新版")
-            
-        )
-        # .add_step(FundamentalCollector("CoreDataFetcher"))
-        .add_step(FundamentalCollectorV2("CoreDataFetcher_新版")) 
-        # .add_step(TechnicalProcessor("FeatureProcessor"))
-        # pipeline.add_step(
-        #     FundamentalCollector("CoreDataFetcher")
-        # ).add_step(  # 维度 1: 股价 + 经营面 (核心金融数据)
-        #     NewsCollector("NewsFetcher")
-        # )  # 维度 2: 消息面 (舆情与情绪)
-        # .add_step(TechnicalProcessor("IndicatorProcessor"))  # 维度 3: 技术面加工
-        # .add_step(QuickChartVisualizer("ChartGen"))
-    )  # 维度 4: 可视化渲染
+        pipeline
+        .add_step(MarketDataCollectorV2("MarketDataFetcher"))
+        .add_step(FundamentalCollectorV2("CoreDataFetcher"))
+        .add_step(TechnicalProcessor("TechFeatureProcessor"))
+        .add_step(FundamentalProcessor("FundFeatureProcessor"))
+    )
 
     # 3. 执行
     results = await pipeline.run()
@@ -154,28 +145,35 @@ async def main():
                 main_concl = conclusion.split("\n")[0].strip()
                 print(f"   Key Insight: {main_concl}")
 
-        # 3. 技术指标 (Technicals)
-        if pack.technicals:
-            print("\n📈 [TECHNICAL INDICATORS]")
-            df_tech = pack.technicals.to_df()
-            if not df_tech.empty:
-                latest = df_tech.iloc[-1]
-                for col in ["rsi", "sma_20"]:
-                    if col in latest:
-                        print(f"   {col.upper():<7}: {latest[col]:.2f}")
+        # 🚀 瑕疵 3 修复：彻底清理重复代码，只打印一次强类型特征
+        if pack.distilled_features.fundamental_metrics:
+            print("\n📊 [DISTILLED FUNDAMENTALS]")
+            for k, v in pack.distilled_features.fundamental_metrics.items():
+                print(f"   {k}: {v}")
+            tags = pack.distilled_features.fundamental_insights.get("health_tags", [])
+            if tags:
+                print(f"   Health Tags: {tags}")
+                
+        if pack.distilled_features.technical:
+            print("\n📈 [DISTILLED TECHNICALS]")
+            tags = pack.distilled_features.technical.get("market_summary", {}).get("trend_tags", [])
+            print(f"   Actionable Tags: {tags}")
 
-        # 4. 可视化链接 (Visualizers)
+        # 可视化链接 (Visualizers)
         if pack.charts:
             print("\n🔗 [VISUALIZATION]")
             for name, url in pack.charts.items():
                 print(f"   {name}: {url}")
 
-        # 5. 原始数据上传 (Optimized for Cloud LLMs)
-        print("\n📦 [DATA FOR CLOUD LLM]")
+        # V3 架构：原始数据上传 (Optimized for Cloud LLMs)
+        print("\n📦 [HIGH DENSITY DATA FOR CLOUD LLM]")
         print("-" * 10)
-        full_json = pack.model_dump_json(indent=2)
-        print("   Uploading full research pack to file.io...")
-        short_link = upload_to_file_io(full_json)
+        
+        # 调用视图投影器，获取无冗余 JSON
+        llm_payload = build_llm_view(pack)
+        
+        print("   Uploading clean, distilled research pack to file.io...")
+        short_link = upload_to_file_io(llm_payload)
         print(f"   SHORT LINK: {short_link}")
         print("   (Note: This link is valid for 60 mins.)")
 
