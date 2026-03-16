@@ -27,9 +27,43 @@ Tag 命名规范：
 
 from typing import Any, Dict, List, Optional
 
-from alphaflow.components.processors.fundamentals.fundamental_keys import (
-    HealthTagConfig,
-)
+# 本地定义 HealthTagConfig（原 fundamental_keys.py 已删除）
+class HealthTagConfig:
+    """健康/风险标签配置"""
+    # 健康标签
+    HEALTHY = "healthy"
+    WATCH = "watch"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    
+    # 标签阈值
+    ROE_HEALTHY_THRESHOLD = 15.0
+    ROE_WATCH_THRESHOLD = 10.0
+    NET_MARGIN_HEALTHY_THRESHOLD = 10.0
+    DEBT_TO_EQUITY_WARNING_THRESHOLD = 2.0
+    CURRENT_RATIO_HEALTHY_THRESHOLD = 1.5
+    
+    # 标签规则
+    RULES = {
+        "[WIDE_MOAT_HIGH_ROE]": {
+            "indicator": "ROE_TTM",
+            "threshold": 20.0,
+            "compare": "gt",
+            "description": "宽护城河，高股东回报"
+        },
+        "[EXCEPTIONAL_GROSS_MARGIN]": {
+            "indicator": "Gross_Margin_TTM",
+            "threshold": 0.4,
+            "compare": "gt",
+            "description": "极强的定价权"
+        },
+        "[LEVERAGE_RISK]": {
+            "indicator": "Debt_to_Equity",
+            "threshold": 2.0,
+            "compare": "gt",
+            "description": "杠杆风险累积"
+        },
+    }
 
 
 # ==========================================
@@ -39,13 +73,13 @@ class HealthTagger:
     """
     财务健康标签生成器
     
-    输入：indicators (来自 CoreFinancialRatioAnalyzer)
+    输入：fundamental_metrics (来自 MetricEngine 产出的 distilled_features.fundamental_metrics)
     输出：List[str] - 标签列表，如 ["[WIDE_MOAT_HIGH_ROE]", "[STRONG_FREE_CASH_FLOW]"]
     
     使用方式：
         tagger = HealthTagger()
-        indicators = pack.technical_summary.get("indicators", {})
-        tags = tagger.generate_tags(indicators)
+        metrics = pack.distilled_features.fundamental_metrics
+        tags = tagger.generate_tags(metrics)
     """
     
     def __init__(self, config: Optional[HealthTagConfig] = None):

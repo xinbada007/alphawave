@@ -97,6 +97,20 @@ class ResearchPackFacade:
         
         # 6. 缓存 akshare_analysis 路径
         self._analysis_series: Dict[str, List[Dict]] = pack.extra.get("akshare_analysis", {})
+        
+        # 🚀 声明式路由表 (Dispatcher Map)：彻底消灭 if-elif 硬编码
+        # 键: 领域名 (小写) -> 值: 对应的取值解析器函数 (接收 period 和 standard_key)
+        self._domain_routers = {
+            "metrics": lambda p, k: self.get_metric_value(k),
+            "estimates": lambda p, k: self.get_estimate_value(k),
+            "profile": lambda p, k: self.get_profile_value(k),
+            "share_stats": lambda p, k: self.get_share_stats_value(k),
+            # 财务三大表路由：统一交由内部报表提取器处理
+            "income": lambda p, k: self._resolve_statement(p, StatementType.INCOME, k),
+            "balance": lambda p, k: self._resolve_statement(p, StatementType.BALANCE, k),
+            "cash": lambda p, k: self._resolve_statement(p, StatementType.CASH, k),
+            "analysis": lambda p, k: self._resolve_statement(p, StatementType.ANALYSIS, k),
+        }
     
     # ======================================
     # 通用数据获取接口
@@ -336,6 +350,47 @@ class ResearchPackFacade:
         """显式获取：股本结构与做空数据 (对应 pack.fundamentals['share_stats'])"""
         share_stats_dict = self.fundamentals.get("share_stats", {})
         return get_field_value(share_stats_dict, key)
+
+    # ======================================
+    # V3 架构：统一依赖解析器 (Dependency Resolver)
+    # ======================================
+    
+    def _resolve_statement(self, period: str, stmt_type: StatementType, standard_key: str) -> Optional[float]:
+        """内部辅助方法：处理结构化财报的时态路由"""
+        if period == "TTM":
+            return self.get_ttm_value(standard_key, stmt_type=stmt_type)
+        elif period == "LATEST":
+            return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="latest")
+        elif period == "ANNUAL":
+            return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="annual")
+        elif period == "QUARTERLY":
+            return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="quarterly")
+        return None
+
+    def resolve_dependency(self, period_type: str, domain: str, standard_key: str) -> Optional[float]:
+        """
+        全域寻址网关 (Universal Data Address Resolver)
+        完全符合开闭原则 (OCP)，通过路由表动态下发，杜绝硬编码。
+        
+        Args:
+            period_type: 周期类型，支持 "TTM", "LATEST", "ANNUAL", "QUARTERLY"
+            domain: 报表域，支持 "income", "balance", "cash", "metrics", "estimates", "profile", "share_stats"
+            standard_key: 标准字段键，如 "NET_INCOME", "TOTAL_EQUITY"
+        
+        Returns:
+            字段值 (float)，如果无法解析则返回 None
+        """
+        period = period_type.upper()
+        d_lower = domain.lower()
+        
+        # 核心：字典路由查表，O(1) 复杂度，无缝适应未来新增领域
+        router_func = self._domain_routers.get(d_lower)
+        if router_func:
+            return router_func(period, standard_key)
+            
+        # 未知领域兜底防爆
+        print(f"  [Facade] ⚠️ Unknown domain requested: {domain}")
+        return None
 
 
 # ==========================================
