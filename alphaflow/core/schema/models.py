@@ -1,9 +1,12 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Any, ClassVar, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Optional, Set, TypeVar, Generic
 import pandas as pd
 import time
 import io
 from datetime import datetime
+
+# 🚀 V3 架构升级：协变泛型变量，用于 ComponentOutput 类型安全
+T = TypeVar("T", covariant=True)
 
 
 # ==========================================
@@ -181,14 +184,17 @@ class AnalysisContext(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class ComponentOutput(BaseModel):
-    """所有组件的标准输出"""
+class ComponentOutput(BaseModel, Generic[T]):
+    """
+    泛型标准输出 (V3 架构升级)。
+    通过 ComponentOutput[ResearchPack] 明确指定 payload 的具体类型。
+    未指定时，隐式回退为 Any，保证向后兼容性。
+    """
 
     success: bool = True
     error: Optional[str] = None
-    payload: Any = Field(
-        default_factory=lambda: {}, description="Component output payload"
-    )
+    # 🚀 修正：使用 Optional[T] = None，避免 ValidationError 风险
+    payload: Optional[T] = Field(default=None, description="Component output payload of specific type")
 
 
 # --- 具体业务契约 ---
