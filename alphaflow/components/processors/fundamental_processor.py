@@ -32,7 +32,8 @@ class FundamentalProcessor(BaseProcessor):
         # 2. 拯救孤儿：触发 HealthTagger，根据引擎算出的指标生成语义标签
         if pack.distilled_features.fundamental_metrics:
             health_tags = generate_health_tags(pack.distilled_features.fundamental_metrics)
-            pack.distilled_features.fundamental_insights["health_tags"] = health_tags
+            # 🚀 显式赋值替代原地变异，与 exclude_unset=True 兼容
+            pack.distilled_features.fundamental_insights = {"health_tags": health_tags}
 
         # 3. 高管交易降噪
         pack.distilled_features.insider_insights = InsiderAnalyzer.analyze(pack)

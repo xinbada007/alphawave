@@ -36,29 +36,22 @@ class HealthTagConfig:
     WARNING = "warning"
     CRITICAL = "critical"
     
-    # 标签阈值
-    ROE_HEALTHY_THRESHOLD = 15.0
-    ROE_WATCH_THRESHOLD = 10.0
-    NET_MARGIN_HEALTHY_THRESHOLD = 10.0
-    DEBT_TO_EQUITY_WARNING_THRESHOLD = 2.0
-    CURRENT_RATIO_HEALTHY_THRESHOLD = 1.5
-    
-    # 标签规则
+    # 标签规则 (V4: 使用域内短名，阈值适配小数格式)
     RULES = {
         "[WIDE_MOAT_HIGH_ROE]": {
-            "indicator": "ROE_TTM",
-            "threshold": 20.0,
+            "indicator": "ROE",              # 从 "ROE_TTM" 改为域内短名
+            "threshold": 0.20,               # ⚠️ 修正：ROE 现在是小数(0.1662)不是百分比(16.62)
             "compare": "gt",
             "description": "宽护城河，高股东回报"
         },
         "[EXCEPTIONAL_GROSS_MARGIN]": {
-            "indicator": "Gross_Margin_TTM",
+            "indicator": "gross_margin",      # 从 "Gross_Margin_TTM" 改为域内短名
             "threshold": 0.4,
             "compare": "gt",
             "description": "极强的定价权"
         },
         "[LEVERAGE_RISK]": {
-            "indicator": "Debt_to_Equity",
+            "indicator": "debt_to_equity",    # 从 "Debt_to_Equity" 改为域内短名
             "threshold": 2.0,
             "compare": "gt",
             "description": "杠杆风险累积"
@@ -93,16 +86,27 @@ class HealthTagger:
     
     def generate_tags(self, indicators: Dict[str, Any]) -> List[str]:
         """
-        基于财务指标生成标签
+        基于财务指标生成标签 (V4: 适配语义域嵌套结构)
         
         Args:
-            indicators: 财务指标字典，来自 CoreFinancialRatioAnalyzer.analyze()
+            indicators: 财务指标字典，来自 MetricEngine 产出的嵌套结构
         
         Returns:
             标签列表
         """
         if not indicators:
             return []
+        
+        # 🚀 适配语义域：将嵌套结构展平为一维字典用于规则匹配
+        flat: Dict[str, Any] = {}
+        for domain_key, domain_val in indicators.items():
+            if isinstance(domain_val, dict):
+                for metric_key, metric_val in domain_val.items():
+                    if not metric_key.startswith("_"):  # 跳过 _ctx 等元节点
+                        flat[metric_key] = metric_val
+            else:
+                # 兼容性：万一传入的已经是平铺 dict
+                flat[domain_key] = domain_val
         
         tags = []
         
@@ -112,8 +116,8 @@ class HealthTagger:
             threshold = rule.get("threshold")
             compare = rule.get("compare")
             
-            # 获取指标值
-            value = indicators.get(indicator_name)
+            # 获取指标值 (从展平后的字典)
+            value = flat.get(indicator_name)
             
             # 特殊处理 equity_status (字符串类型)
             if indicator_name == "equity_status":
@@ -147,7 +151,7 @@ class HealthTagger:
         self, indicators: Dict[str, Any]
     ) -> List[Dict[str, str]]:
         """
-        生成带描述的标签列表
+        生成带描述的标签列表 (V4: 适配语义域嵌套结构)
         
         Args:
             indicators: 财务指标字典
@@ -158,6 +162,17 @@ class HealthTagger:
         if not indicators:
             return []
         
+        # 🚀 适配语义域：将嵌套结构展平为一维字典用于规则匹配
+        flat: Dict[str, Any] = {}
+        for domain_key, domain_val in indicators.items():
+            if isinstance(domain_val, dict):
+                for metric_key, metric_val in domain_val.items():
+                    if not metric_key.startswith("_"):  # 跳过 _ctx 等元节点
+                        flat[metric_key] = metric_val
+            else:
+                # 兼容性：万一传入的已经是平铺 dict
+                flat[domain_key] = domain_val
+        
         result = []
         
         for tag_name, rule in self.config.RULES.items():
@@ -166,7 +181,8 @@ class HealthTagger:
             compare = rule.get("compare")
             description = rule.get("description", "")
             
-            value = indicators.get(indicator_name)
+            # 获取指标值 (从展平后的字典)
+            value = flat.get(indicator_name)
             
             # 特殊处理 equity_status
             if indicator_name == "equity_status":
