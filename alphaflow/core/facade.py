@@ -382,12 +382,21 @@ class ResearchPackFacade:
         """
         period = period_type.upper()
         d_lower = domain.lower()
-        
+
+        # 🚀 DEBUG: 打印解析请求
+        print(f"  [Facade] Resolving: {period} / {domain} / {standard_key}")
+
         # 核心：字典路由查表，O(1) 复杂度，无缝适应未来新增领域
         router_func = self._domain_routers.get(d_lower)
         if router_func:
-            return router_func(period, standard_key)
-            
+            result = router_func(period, standard_key)
+            # 🚀 DEBUG: 打印解析结果
+            if result is None:
+                print(f"    -> Not found")
+            else:
+                print(f"    -> Found: {result}")
+            return result
+
         # 未知领域兜底防爆
         print(f"  [Facade] ⚠️ Unknown domain requested: {domain}")
         return None

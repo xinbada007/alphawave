@@ -147,13 +147,13 @@ class FundamentalCollector(BaseCollector):
         # TTM 计算与货币审计
         mcap_input = get_field_value(pack.market_metrics, Key.metrics.MARKET_CAP)
         
-        ttm_ni = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.NI), is_cum)
-        ttm_rev = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.REV), is_cum)
+        ttm_ni = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS), is_cum)
+        ttm_rev = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.TOTAL_REVENUE), is_cum)
         ttm_fcf = calc_ttm_stitch(
             db.get("q_cash", []), db.get("a_cash", []),
             get_fcf_raw, is_cum
         )
-        equity = get_field_value(cur_bs, Key.balance.EQUITY) if cur_bs else None
+        equity = get_field_value(cur_bs, Key.balance.TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT) if cur_bs else None
         
         ttm_values = {
             "net_income": ttm_ni,

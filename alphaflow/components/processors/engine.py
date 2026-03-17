@@ -44,6 +44,7 @@ class MetricEngine:
                 
                 # 如果底层数据缺失，静默跳过，绝不报错
                 if missing_data:
+                    print(f"  [MetricEngine] ⚠️ Skipped '{meta['feature_name']}': Missing dependency [{domain}] -> {standard_key}")
                     continue
                 
                 # 2. 执行纯函数计算 (捕获除零等数学异常)

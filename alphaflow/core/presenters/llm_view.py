@@ -61,6 +61,5 @@ def build_llm_view(pack: ResearchPack) -> str:
     return view.model_dump_json(
         indent=2, 
         exclude_none=True, 
-        exclude_defaults=True,
         exclude_unset=True
     )

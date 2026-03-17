@@ -5,6 +5,15 @@ V3 架构：极简无状态的指标函数，消灭类爆炸。
 
 所有函数通过 @MetricEngine.fundamental_metric 装饰器注册，
 在 Import Time 自动注入 MetricEngine._registry。
+
+更新日志：
+- 2026-03-17: 严格采用全称 Key，删除所有缩写别名
+              ROE_TTM: 使用 NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS / TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT
+              ROA_TTM: 使用 NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS / TOTAL_ASSETS
+              Net_Margin_TTM: 使用 NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS / TOTAL_REVENUE
+              Op_Margin_TTM: 使用 OPERATING_INCOME / TOTAL_REVENUE
+              Current_Ratio: 使用 TOTAL_CURRENT_ASSETS / TOTAL_CURRENT_LIABILITIES
+              Debt_to_Equity: 使用 TOTAL_LIABILITIES / TOTAL_EQUITY_CONSOLIDATED
 """
 
 from typing import Optional
@@ -18,31 +27,42 @@ from alphaflow.core.keys import Key
 
 @MetricEngine.fundamental_metric(
     feature_name="ROE_TTM",
-    depends_on=[("TTM", "income", Key.income.NI), ("LATEST", "balance", Key.balance.EQUITY)]
+    depends_on=[
+        ("TTM", "income", Key.income.NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS),
+        ("LATEST", "balance", Key.balance.TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT)
+    ]
 )
-def calc_roe_ttm(ni_ttm: float, equity_latest: float) -> Optional[float]:
+def calc_roe_ttm(ni_attributable_ttm: float, equity_attributable_latest: float) -> Optional[float]:
     """
     净资产收益率 TTM (Return on Equity)
-    公式：净利润(TTM) / 最新股东权益
+    公式：归母净利润(TTM) / 最新归母股东权益
+    严格对应二级市场股东回报
     """
-    return round(ni_ttm / equity_latest, 4) if equity_latest != 0 else None
+    return round(ni_attributable_ttm / equity_attributable_latest, 4) if equity_attributable_latest != 0 else None
 
 
 @MetricEngine.fundamental_metric(
     feature_name="ROA_TTM",
-    depends_on=[("TTM", "income", Key.income.NI), ("LATEST", "balance", Key.balance.ASSETS)]
+    depends_on=[
+        ("TTM", "income", Key.income.NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS),
+        ("LATEST", "balance", Key.balance.TOTAL_ASSETS)
+    ]
 )
-def calc_roa_ttm(ni_ttm: float, assets_latest: float) -> Optional[float]:
+def calc_roa_ttm(ni_including_nci_ttm: float, assets_latest: float) -> Optional[float]:
     """
     总资产收益率 TTM (Return on Assets)
-    公式：净利润(TTM) / 最新总资产
+    公式：包含少数股东的净利润(TTM) / 最新总资产
+    严格对应资产造血能力
     """
-    return round(ni_ttm / assets_latest, 4) if assets_latest != 0 else None
+    return round(ni_including_nci_ttm / assets_latest, 4) if assets_latest != 0 else None
 
 
 @MetricEngine.fundamental_metric(
     feature_name="Gross_Margin_TTM",
-    depends_on=[("TTM", "income", Key.income.GP), ("TTM", "income", Key.income.REV)]
+    depends_on=[
+        ("TTM", "income", Key.income.GROSS_PROFIT),
+        ("TTM", "income", Key.income.TOTAL_REVENUE)
+    ]
 )
 def calc_gross_margin_ttm(gp_ttm: float, rev_ttm: float) -> Optional[float]:
     """
@@ -54,19 +74,26 @@ def calc_gross_margin_ttm(gp_ttm: float, rev_ttm: float) -> Optional[float]:
 
 @MetricEngine.fundamental_metric(
     feature_name="Net_Margin_TTM",
-    depends_on=[("TTM", "income", Key.income.NI), ("TTM", "income", Key.income.REV)]
+    depends_on=[
+        ("TTM", "income", Key.income.NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS),
+        ("TTM", "income", Key.income.TOTAL_REVENUE)
+    ]
 )
-def calc_net_margin_ttm(ni_ttm: float, rev_ttm: float) -> Optional[float]:
+def calc_net_margin_ttm(ni_including_nci_ttm: float, rev_ttm: float) -> Optional[float]:
     """
     净利率 TTM (Net Margin)
-    公式：净利润(TTM) / 营收(TTM)
+    公式：包含少数股东的净利润(TTM) / 营收(TTM)
+    营收是100%并表的，利润也必须用100%并表口径
     """
-    return round(ni_ttm / rev_ttm, 4) if rev_ttm != 0 else None
+    return round(ni_including_nci_ttm / rev_ttm, 4) if rev_ttm != 0 else None
 
 
 @MetricEngine.fundamental_metric(
     feature_name="Op_Margin_TTM",
-    depends_on=[("TTM", "income", Key.income.OI), ("TTM", "income", Key.income.REV)]
+    depends_on=[
+        ("TTM", "income", Key.income.OPERATING_INCOME),
+        ("TTM", "income", Key.income.TOTAL_REVENUE)
+    ]
 )
 def calc_op_margin_ttm(oi_ttm: float, rev_ttm: float) -> Optional[float]:
     """
@@ -82,7 +109,10 @@ def calc_op_margin_ttm(oi_ttm: float, rev_ttm: float) -> Optional[float]:
 
 @MetricEngine.fundamental_metric(
     feature_name="Current_Ratio",
-    depends_on=[("LATEST", "balance", Key.balance.C_ASSETS), ("LATEST", "balance", Key.balance.C_LIAB)]
+    depends_on=[
+        ("LATEST", "balance", Key.balance.TOTAL_CURRENT_ASSETS),
+        ("LATEST", "balance", Key.balance.TOTAL_CURRENT_LIABILITIES)
+    ]
 )
 def calc_current_ratio(ca: float, cl: float) -> Optional[float]:
     """
@@ -95,9 +125,9 @@ def calc_current_ratio(ca: float, cl: float) -> Optional[float]:
 @MetricEngine.fundamental_metric(
     feature_name="Quick_Ratio",
     depends_on=[
-        ("LATEST", "balance", Key.balance.C_ASSETS),
+        ("LATEST", "balance", Key.balance.TOTAL_CURRENT_ASSETS),
         ("LATEST", "balance", Key.balance.INVENTORIES),
-        ("LATEST", "balance", Key.balance.C_LIAB)
+        ("LATEST", "balance", Key.balance.TOTAL_CURRENT_LIABILITIES)
     ]
 )
 def calc_quick_ratio(ca: float, inventory: float, cl: float) -> Optional[float]:
@@ -110,12 +140,16 @@ def calc_quick_ratio(ca: float, inventory: float, cl: float) -> Optional[float]:
 
 @MetricEngine.fundamental_metric(
     feature_name="Debt_to_Equity",
-    depends_on=[("LATEST", "balance", Key.balance.LIAB), ("LATEST", "balance", Key.balance.EQUITY)]
+    depends_on=[
+        ("LATEST", "balance", Key.balance.TOTAL_LIABILITIES),
+        ("LATEST", "balance", Key.balance.TOTAL_EQUITY_CONSOLIDATED)
+    ]
 )
 def calc_debt_to_equity(liab: float, equity: float) -> Optional[float]:
     """
     负债权益比 (Debt to Equity Ratio)
-    公式：总负债 / 股东权益
+    公式：总负债 / 综合总权益
+    看整体破产风险时，少数股东权益也是安全垫
     """
     return round(liab / equity, 4) if equity != 0 else None
 
@@ -126,7 +160,10 @@ def calc_debt_to_equity(liab: float, equity: float) -> Optional[float]:
 
 @MetricEngine.fundamental_metric(
     feature_name="Asset_Turnover_TTM",
-    depends_on=[("TTM", "income", Key.income.REV), ("LATEST", "balance", Key.balance.ASSETS)]
+    depends_on=[
+        ("TTM", "income", Key.income.TOTAL_REVENUE),
+        ("LATEST", "balance", Key.balance.TOTAL_ASSETS)
+    ]
 )
 def calc_asset_turnover_ttm(rev_ttm: float, assets_latest: float) -> Optional[float]:
     """
@@ -138,12 +175,15 @@ def calc_asset_turnover_ttm(rev_ttm: float, assets_latest: float) -> Optional[fl
 
 @MetricEngine.fundamental_metric(
     feature_name="Equity_Turnover_TTM",
-    depends_on=[("TTM", "income", Key.income.REV), ("LATEST", "balance", Key.balance.EQUITY)]
+    depends_on=[
+        ("TTM", "income", Key.income.TOTAL_REVENUE),
+        ("LATEST", "balance", Key.balance.TOTAL_EQUITY_CONSOLIDATED)
+    ]
 )
 def calc_equity_turnover_ttm(rev_ttm: float, equity_latest: float) -> Optional[float]:
     """
     权益周转率 TTM (Equity Turnover)
-    公式：营收(TTM) / 最新股东权益
+    公式：营收(TTM) / 最新综合股东权益
     """
     return round(rev_ttm / equity_latest, 4) if equity_latest != 0 else None
 

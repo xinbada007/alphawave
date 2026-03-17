@@ -627,11 +627,6 @@ class CashFlowKey:
     BEGINNING_CASH_POSITION: str = "BEGINNING_CASH_POSITION"
     END_CASH_POSITION: str = "END_CASH_POSITION"
 
-    # ========== 向后兼容别名 (Backward Compatibility Aliases) ==========
-    OCF: str = OPERATING_CASH_FLOW           # 经营现金流
-    ICF: str = INVESTING_CASH_FLOW           # 投资现金流
-    FCF: str = FREE_CASH_FLOW                # 自由现金流
-    CAPEX: str = CAPITAL_EXPENDITURE         # 资本支出
 
 
 # ==========================================
@@ -770,8 +765,3 @@ class CashFlowRecord(BaseModel):
     BEGINNING_CASH_POSITION: Optional[float] = None  # 期初现金
     END_CASH_POSITION: Optional[float] = None  # 期末现金
 
-    # ========== 向后兼容别名 (Backward Compatibility Aliases) ==========
-    OCF: Optional[float] = None  # 别名: OPERATING_CASH_FLOW
-    ICF: Optional[float] = None  # 别名: INVESTING_CASH_FLOW
-    FCF: Optional[float] = None  # 别名: FREE_CASH_FLOW
-    CAPEX: Optional[float] = None  # 别名: CAPITAL_EXPENDITURE
