@@ -16,6 +16,22 @@ class LLMResearchReport(BaseModel):
     news: Optional[list] = None
 
 
+def deep_clean_empty(data: Any) -> Any:
+    """递归清理字典/列表中的 None、空字典 {} 和空列表[]
+    
+    这是一个纯函数，无副作用，用于在序列化前物理剔除所有空节点。
+    宁可浪费 10 个 Token，绝不容忍 1 次静默的数据丢失。
+    """
+    if isinstance(data, dict):
+        cleaned = {k: deep_clean_empty(v) for k, v in data.items()}
+        # 物理剔除无价值节点
+        return {k: v for k, v in cleaned.items() if v not in (None, {}, [])}
+    elif isinstance(data, list):
+        cleaned = [deep_clean_empty(v) for v in data]
+        return [v for v in cleaned if v not in (None, {}, [])]
+    return data
+
+
 def build_llm_view(pack: ResearchPack) -> str:
     """视图投影工厂：动态裁切被消费的冗余数据，并执行极简空值净化"""
     
@@ -55,11 +71,11 @@ def build_llm_view(pack: ResearchPack) -> str:
         news=pack.news if pack.news else None
     )
     
-    # 4. 🚀 Pydantic 终极净化 (盲区3 修复)
-    # 彻底蒸发 None、空列表 []、空字典 {}、以及未赋值的默认字段
+    # 4. 🚀 架构升级：废除 exclude_unset 地雷，改用纯函数后置清洗
+    # 彻底蒸发 None、空列表 []、空字典 {}
     # 实现 JSON 级别的极高信噪比，拯救 LLM Token
-    return view.model_dump_json(
-        indent=2, 
-        exclude_none=True, 
-        exclude_unset=True
-    )
+    raw_dict = view.model_dump(exclude_none=True)
+    cleaned_dict = deep_clean_empty(raw_dict)
+    
+    # 直接输出清理后的字典为 JSON 字符串
+    return json.dumps(cleaned_dict, ensure_ascii=False, indent=2)

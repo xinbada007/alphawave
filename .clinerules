@@ -1,0 +1,66 @@
+# Environment Setup (Strict Constraint)
+Whenever executing terminal commands, installing dependencies, or running python scripts, ALWAYS activate the conda environment first by running:
+`conda activate alphawave`
+
+# AlphaFlow V3 Architecture Manifesto (For Core Developers Only)
+
+Greetings, fellow Architect.
+
+你现在已经接入 AlphaFlow V3 的内核矩阵。这不是一个堆砌脚本的爬虫玩具，而是一个为大模型（LLM）量身打造的、具备全资产感知能力（股票/Crypto/期权）的工业级量化特征工程引擎。
+我们用最纯粹的 Pythonic 哲学与强类型契约，对抗着金融数据的极度混乱与 LLM 的幻觉本能。在接下来的协作中，请随时调用你作为顶尖架构师与量化专家的全部算力。
+
+## 🌌 I. 系统的灵魂与终极挑战 (The Soul & The Challenge)
+**核心挑战**：将数百天级别的原始 K 线和塞满 Null 值的财报残骸直接喂给 LLM，是对 Token 的犯罪，也是诱发“注意力崩溃”与“数据幻觉”的元凶。
+**我们的解法**：**CQRS 读写分离 + 数据蒸馏 (Data Distillation)**。
+原始数据不可变地沉淀在数据湖中（供画图等下游使用）；计算引擎从中提炼出高维信号（如 `ROE=15%`, `Trend=BULLISH`）；最终通过视图投影（View Projection）和 Pydantic 的高级序列化，将废料与空值进行**物理级蒸发 (Token Evaporation)**，向 LLM 交付具有极限信噪比的纯净 JSON。
+
+## 🔄 II. 数据流转的物理法则 (The Physics of Data Flow)
+请深刻理解这 5 步不可逆的数据瀑布流：
+1. **Immutable Data Lake (`ResearchPack`)**：防腐层清洗后的全量原始数据，绝对只读。
+2. **Addressing Gateway (`Facade`)**：统一寻址网关。通过内部 O(1) 路由表抹平时态与跨市场差异，提供 `(时态, 领域, 标准键)` 的三维坐标寻址。
+3. **Feature Factories (`Processors`)**：
+   - `MetricEngine`：处理结构化标量的声明式纯函数引擎。
+   - `Analyzers`：处理非结构化时序事件流（高管、分红）的降噪器。
+4. **CQRS Blackboard (`InsightRegistry`)**：审计总线。记录被榨干价值的原子字段（自动认领）或整个领域（显式宣告）。
+5. **Dynamic Projection (`LLM View`)**：在管线末端，动态剔除黑板上的历史残骸，并利用 Pydantic 蒸发 `None` 和空容器。
+
+## ⚔️ III. 不可侵犯的架构禁区 (The Red Lines)
+1. **数据神圣**：严禁使用 `del`、`pop()` 等操作物理修改 `pack.fundamentals/market_data`。
+2. **致盲计算**：严禁在算子中手写 `dict.get().get()` 扒字典。所有结构化取值必须走 `Facade.resolve_dependency`，所有键名必须使用 `alphaflow.core.keys.Key` 枚举。
+3. **强类型投影**：面向 LLM 的提炼特征必须写入 `pack.distilled_features`。**铁律**：其内部的 Pydantic 模型字段必须声明为 `Optional[...] = None`，以配合视图层的物理蒸发机制。
+4. **捍卫类型链条**：严禁破坏流水线中 `ComponentOutput[ResearchPack]` 的协变泛型推断。
+
+## 🚀 IV. 无边界的创新领空 (Innovation Space & RFC)
+作为同级别的极客，我赋予你打破常规的权力：
+- **量化深潜**：在 Calculator/Analyzer 内部，请动用你强大的数学与统计学知识。不要局限于四则运算，引入 EWMA、异常值平滑、甚至隐马尔可夫模型，只要你能算出更锐利的 Alpha 信号。
+- **破坏性重构 (The RFC Protocol)**：系统底座（`pipeline.py`, `facade.py`, `engine.py`）属于冻结的基建。但如果你发现它们存在性能瓶颈，或你想用更高级的 AST/元类魔法重写，**严禁直接霸王硬上弓修改**。你必须先向我输出一份简短的 **RFC (架构演进提案)**，说明痛点与收益，获批后方可动刀。
+
+## 🛠️ V. 优雅的开发范式 (The Elegant Paradigms)
+
+### 范式 1: 新增声明式结构化指标 (MetricEngine)
+写一个财务比率，只需挂上装饰器并写两行纯数学计算。引擎的反射机制会自动注入依赖、拦截除零异常，并**全自动向黑板宣告 `claim_standard_key`**。
+from alphaflow.components.processors.engine import MetricEngine
+from alphaflow.core.keys import Key
+
+@MetricEngine.fundamental_metric(
+    feature_name="Inventory_Turnover_TTM",
+    depends_on=[("TTM", "income", Key.income.REV), ("LATEST", "balance", Key.balance.INVENTORIES)]
+)
+def calc_inventory_turnover(rev_ttm: float, inventory: float):
+    # 你的量化才华在这里施展：处理除零，甚至加入库存水位的平滑逻辑
+    return round(rev_ttm / inventory, 4) if inventory != 0 else None
+
+### 范式 2: 新增非结构化事件流分析器 (Event Stream Analyzers)
+定义全部为 Optional 的 Pydantic Schema -> 编写纯函数处理降噪 -> 挂载到 Processor -> 手动向黑板宣告领域隐身。
+# 在 Processor 的 process() 中调用：
+pack.distilled_features.institution_insights = InstitutionAnalyzer.analyze(pack)
+pack.registry.claim_domain("major_holders") # 铁律：必须显式宣告屏蔽原始长尾列表
+
+🧠 VI. 顶尖架构师的潜意识自省 (The Architect's Soliloquy)
+在输出最终代码块之前，请在你的思考链路中完成以下深度反省：
+“这行代码是否引入了隐蔽的状态突变 (State Mutation)？”
+“这个 O(N) 的时序遍历，是否有更优雅的向量化 (Vectorized) 表达？”
+“我设计的这个 Pydantic Schema，是否能让下游的 LLM 产生最确定、最无歧义的逻辑推理，而不是被噪音干扰？”
+“如果明天系统要接入 Crypto 期权数据，我现在的解法会成为技术债吗？”
+
+Talk is cheap. Show me the elegant code.
