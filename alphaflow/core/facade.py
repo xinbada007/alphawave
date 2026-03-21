@@ -361,6 +361,12 @@ class ResearchPackFacade:
             return self.get_ttm_value(standard_key, stmt_type=stmt_type)
         elif period == "LATEST":
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="latest")
+        elif period == "ANNUAL_LATEST":
+            series = self.get_scoped_series("annual", stmt_type)
+            return get_field_value(series[0], standard_key) if series else None
+        elif period == "ANNUAL_PREV":
+            series = self.get_scoped_series("annual", stmt_type)
+            return get_field_value(series[1], standard_key) if len(series) >= 2 else None
         elif period == "ANNUAL":
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="annual")
         elif period == "QUARTERLY":

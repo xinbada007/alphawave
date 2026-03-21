@@ -51,7 +51,49 @@ async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[
 
 
 # ==========================================
-# 2. 货币错配审计
+# 2. 币种对齐汇率解析
+# ==========================================
+async def resolve_fx_rate(
+    market_type: MarketType,
+    currency_ctx: Dict[str, Any],
+) -> Optional[float]:
+    """
+    解析用于币种对齐的汇率因子。
+
+    Fallback 链：
+      P1: 实时汇率（异步网络调用）
+      P2: alignment_factor — 数学隐含汇率，带安全区间校验
+          - HK: 0.8 ~ 1.1（纯 HKD/CNY 汇率区间）
+          - US: 6.0 ~ 8.5（纯 USD/CNY 汇率区间）
+          - ADS (>20): 拒绝 — factor 内含股份乘数，不可当纯汇率使用
+      P4: 返回 None — 优雅降级
+
+    注意：ADS 场景的 alignment_factor 内含 ADS 乘数（如 1:3 → factor ≈ 21.6），
+    若当作纯汇率使用会导致市值放大 N 倍，因此 P2 降级故意排除此区间。
+    """
+    fx_rate = None
+
+    # P1: 实时汇率（异步网络）
+    if market_type == MarketType.HK:
+        fx_rate = await get_fx_rate("HKD", "CNY")
+    elif market_type == MarketType.US:
+        fx_rate = await get_fx_rate("USD", "CNY")
+
+    # P2: alignment_factor 降级（仅限纯汇率安全区间）
+    if fx_rate is None:
+        math_factor = currency_ctx.get("alignment_factor", 1.0)
+        if market_type == MarketType.HK and 0.8 <= math_factor <= 1.1:
+            fx_rate = math_factor
+            print(f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}")
+        elif market_type == MarketType.US and 6.0 <= math_factor <= 8.5:
+            fx_rate = math_factor
+            print(f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}")
+
+    return fx_rate
+
+
+# ==========================================
+# 3. 货币错配审计
 # ==========================================
 def audit_currency_context(
     metrics: Dict[str, Any], 
