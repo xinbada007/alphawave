@@ -88,16 +88,10 @@ def build_llm_view(pack: ResearchPack) -> str:
 
     # 4. 🚀 架构升级：废除 exclude_unset 地雷，改用纯函数后置清洗
     # 彻底蒸发 None、空列表 []、空字典 {}
-    # 4. 🚀 架构升级：废除 exclude_unset 地雷，改用纯函数后置清洗
-    # 彻底蒸发 None、空列表 []、空字典 {}
     # 实现 JSON 级别的极高信噪比，拯救 LLM Token
-    raw_dict = view.model_dump(exclude_none=True)
+    raw_dict = view.model_dump(mode="json", exclude_none=True)
     cleaned_dict = deep_clean_empty(raw_dict)
 
     # 直接输出清理后的字典为 JSON 字符串
-    return json.dumps(cleaned_dict, ensure_ascii=False, indent=2)
-    raw_dict = view.model_dump(exclude_none=True)
-    cleaned_dict = deep_clean_empty(raw_dict)
-
-    # 直接输出清理后的字典为 JSON 字符串
-    return json.dumps(cleaned_dict, ensure_ascii=False, indent=2)
+    # default=str 兜底：防止 unclaimed_fundamentals 中残留 date/Decimal 等非标类型
+    return json.dumps(cleaned_dict, ensure_ascii=False, indent=2, default=str)

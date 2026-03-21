@@ -64,3 +64,37 @@ pack.registry.claim_domain("major_holders") # 铁律：必须显式宣告屏蔽�
 “如果明天系统要接入 Crypto 期权数据，我现在的解法会成为技术债吗？”
 
 Talk is cheap. Show me the elegant code.
+
+## 💱 VII. 币种错配识别与修正体系 (Currency Mismatch Resolution)
+
+### 问题本质
+部分上市公司的交易币种与财报币种不一致：
+- **港股 HKD/CNY**：如小米(1810.HK) — 港元交易、人民币财报
+- **美股 USD/CNY**：如拼多多(PDD) — 美元交易、人民币财报
+
+### 识别机制（3 层审计，已实现于 `helpers.py`）
+1. **L1 元数据标签**：AkShare ACL 提取的 `IS_CNY_HKD_MISMATCH` 标志（港股专用）
+2. **L2 数学对撞**：`factor = api_pe / (market_cap / ni_ttm)` — 当 factor 偏离 1.0 时即检测到错配
+3. **L3 综合判定**：按市场匹配因子阈值（HK: 0.8~0.98, US: 6.0~8.5, ADS: >20）
+
+### `alignment_factor` 的真实物理含义（独立验证）
+- **它就是数据供应商（东财）在计算 PE 时内部使用的报告期加权平均汇率**
+- 对小米：factor=0.9238, 2025年HKD/CNY年均汇率=0.9219, 完全吻合
+- 对美股 CNY 报表公司：factor ≈ USD/CNY 汇率（如 7.2）
+- **这意味着 factor 在港股和美股场景下都编码了有意义的汇率信息**
+
+### 指标计算时的币种修正 Fallback 链（强制遵守）
+当 Processor 层自行计算涉及"市值 × 财报"交叉的指标（如 `PS_TTM = MCap / Revenue`）时：
+
+```
+P0 透传    → 直接使用 API 直供值（PE/PB），完全规避币种问题
+P1 预折算  → 使用 MARKET_CAP_RMB（Collector 已用最优汇率预算）
+P2 隐含汇率 → MCap_Raw × alignment_factor（编码报告期平均汇率，优于实时）
+P3 实时汇率 → MCap_Raw × FX_RATE（有 2-5% 时间差偏移，但仍可接受）
+P4 跳过    → 指标赋 None，优雅降级（宁缺毋错）
+```
+
+### ⚠️ 禁令
+1. **严禁**在 `ratios.py` 等 Processor 层写 `if market_type == HK` 式硬编码分支
+2. **严禁**绕过 Facade 直接从 `pack.market_metrics` 手动取 `MARKET_CAP` 做跨币种除法
+3. **严禁**用实时汇率（`FX_RATE`）修正历史多年增长率——实时汇率仅适用于当期快照指标
