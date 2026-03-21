@@ -45,3 +45,17 @@ def calc_quick_ratio(ca: float, inv: float, cl: float) -> Optional[float]:
 def calc_debt_to_equity(liab: float, equity: float) -> Optional[float]:
     """总负债 / 综合总权益 — NCI也是安全垫"""
     return round(liab / equity, 4) if equity != 0 else None
+
+
+@MetricEngine.fundamental_metric(
+    feature_name="interest_coverage_ratio",
+    domain=DOMAIN,
+    depends_on=[
+        ("TTM", "income", Key.income.OPERATING_INCOME),
+        ("TTM", "income", Key.income.INTEREST_EXPENSE),
+    ]
+)
+def calc_interest_coverage(op_income: float, interest_exp: float) -> Optional[float]:
+    """营业利润 / |利息支出| — 利息保障倍数，越高越安全"""
+    ie = abs(interest_exp)
+    return round(op_income / ie, 2) if ie > 0 else None

@@ -144,3 +144,37 @@ def calc_cash_to_assets(cash: float, assets: float) -> Optional[float]:
 def calc_core_profit_ratio(oi: float, pretax: float) -> Optional[float]:
     """营业利润 / 税前利润 — 核心利润占比，越接近1越健康"""
     return round(oi / pretax, 4) if pretax != 0 else None
+
+
+# ==========================================
+# 现金派息率 — 年报口径
+# ==========================================
+
+@MetricEngine.fundamental_metric(
+    feature_name="dividend_payout_ratio",
+    domain=DOMAIN_CASHFLOW,
+    depends_on=[
+        ("ANNUAL_LATEST", "cash", Key.cash.CASH_DIVIDENDS_PAID),
+        ("ANNUAL_LATEST", "income", Key.income.NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS),
+    ]
+)
+def calc_dividend_payout(div_paid: float, ni: float) -> Optional[float]:
+    """现金股息 / 归母净利 — 真实分红意愿（年报口径，abs 防 YFinance 负值）"""
+    return round(abs(div_paid) / ni, 4) if ni > 0 else None
+
+
+# ==========================================
+# Novy-Marx 毛利资产比 (GPA)
+# ==========================================
+
+@MetricEngine.fundamental_metric(
+    feature_name="gross_profit_to_assets",
+    domain=DOMAIN_EARNINGS_QUALITY,
+    depends_on=[
+        ("TTM", "income", Key.income.GROSS_PROFIT),
+        ("LATEST", "balance", Key.balance.TOTAL_ASSETS),
+    ]
+)
+def calc_gpa(gp: float, ta: float) -> Optional[float]:
+    """毛利(TTM) / 总资产 — Novy-Marx 质量因子，比 ROA 更纯净"""
+    return round(gp / ta, 4) if ta > 0 else None

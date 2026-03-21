@@ -46,3 +46,18 @@ def calc_pb(pb: float) -> Optional[float]:
 def calc_ps_ttm(mcap: float, rev: float) -> Optional[float]:
     """市销率 — 使用 MARKET_CAP_ALIGNED 实现币种透明"""
     return round(mcap / rev, 4) if rev > 0 else None
+
+
+@MetricEngine.fundamental_metric(
+    feature_name="fcf_yield",
+    domain=DOMAIN,
+    depends_on=[
+        ("TTM", "cash", Key.cash.OPERATING_CASH_FLOW),
+        ("TTM", "cash", Key.cash.CAPITAL_EXPENDITURE),
+        ("LATEST", "metrics", Key.metrics.MARKET_CAP_ALIGNED),
+    ]
+)
+def calc_fcf_yield(ocf: float, capex: float, mcap: float) -> Optional[float]:
+    """自由现金流收益率 — FCF_TTM / 对齐市值，现金估值视角"""
+    fcf = ocf - abs(capex)
+    return round(fcf / mcap, 4) if mcap > 0 else None
