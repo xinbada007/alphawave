@@ -15,7 +15,7 @@ class BaseFetcher(ABC):
 
     设计哲学：
     1. 轨道 1：核心状态快照 (严格防腐层) - 通过 TASK_MAPPING_ROUTER 精细编排
-    2. 轨道 2：事件流与异构数据 (标准化透传) - 委托 event_normalizer 做 Provider 词汇翻译
+    2. 轨道 2：事件流与异构数据 (标准化透传) - 通过 core_adapter.normalize_events 进行 Provider 词汇翻译
 
     架构升级：
     - 移除 FINANCIAL_TASKS / META_TASKS 二元分流
@@ -56,8 +56,8 @@ class BaseFetcher(ABC):
             - ACL_TASKS -> adapter.normalize(task_name=task_name)
             - Adapter 根据 TASK_MAPPING_ROUTER 决定映射表组合
 
-        轨道 2：事件流与异构数据 (无损透传)
-            - insider_trading, dividends, splits 等 -> 原样返回，仅提取日期
+        轨道 2：事件流与异构数据 (标准化透传)
+            - 委托 event_normalizer 进行 Provider 词汇翻译 + transform 函子
         """
 
         # 1. [Hook] 前置处理 (如 Symbol 格式化：600519.SH -> 600519)
@@ -95,15 +95,17 @@ class BaseFetcher(ABC):
             return raw_data
 
         # 轨道 2：事件流与异构数据 (标准化透传)
-        # 🚀 D1: 委托给独立的事件流标准化器，避免 BaseFetcher 膨胀
+        # 🚀 D1: 委托 core_adapter.normalize_events()，避免 BaseFetcher 膨胀
         else:
-            from alphaflow.core.acl.event_normalizer import normalize_event_fields
+            from alphaflow.core.acl.core_adapter import normalize_events
             from alphaflow.core.context import GlobalContext
 
             is_debug = GlobalContext().get("DEBUG", False)
             
-            # 字段别名 + 文本提取 + 日期标准化（一行委托）
-            raw_data = normalize_event_fields(raw_data)
+            # 字段别名 + transform 函子 + 日期标准化（一行委托）
+            # provider_id 从 Track 1 的 adapter 复用，确保 Provider 隔离
+            pid = getattr(getattr(self, "adapter", None), "provider_id", "")
+            raw_data = normalize_events(raw_data, provider_id=pid)
             
             if is_debug:
                 for item in raw_data:
