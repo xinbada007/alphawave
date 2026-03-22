@@ -98,3 +98,85 @@ P4 跳过    → 指标赋 None，优雅降级（宁缺毋错）
 1. **严禁**在 `ratios.py` 等 Processor 层写 `if market_type == HK` 式硬编码分支
 2. **严禁**绕过 Facade 直接从 `pack.market_metrics` 手动取 `MARKET_CAP` 做跨币种除法
 3. **严禁**用实时汇率（`FX_RATE`）修正历史多年增长率——实时汇率仅适用于当期快照指标
+
+## 🔬 VIII. 基本面扫描器设计哲学 (Pathology Lab Doctrine)
+
+> 本节记录 C5 设计讨论中形成的核心架构共识，具有与 Section III 同等约束力。
+
+### 核心隐喻：检验科 vs 法庭
+
+AlphaFlow 是**检验官（Coroner）**，不是**诊断师（Diagnostician）**。
+
+- **AlphaFlow 的职责**：吹哨（Whistleblowing）—— 冷静、中立、极其客观地描述**事实**
+- **LLM 的职责**：断案（Adjudication）—— 基于这些事实作出判断和推断
+
+### 哲学依据：为什么 AlphaFlow 不能替 LLM 做决策？
+
+1. **先验缺失**：定义一家公司的商业模式需要先验知识（茅台 vs 沃尔玛 vs 银行的 ROE 驱动因子完全不同），这是 LLM 的推理领域，不是单纯数字计算能得到的
+2. **注意力守护**：AlphaFlow 的核心价值在于提供**多维度注意力线索（Attention Cues）**，帮助 LLM 集中注意力，降低因注意力稀释导致的幻觉，而不是越俎代庖
+3. **信息增量原则**：如果一个"信号"只是重复 LLM 已经能自己看到的数字，则该信号没有信息增量，不应输出
+
+### ⚠️ 扫描器绝对禁令（scanner.py 及所有 Analyzer）
+
+1. **严禁出现定性判断词**：`WARNING` / `DANGER` / `RISK` / `HEALTHY` / `EXCELLENT` / `POOR` / `STRONG` / `WEAK` —— 这些是法庭的语言，不是检验科的语言
+2. **严禁单指标阈值打标**：`ROE > 20% → [WIDE_MOAT]` 这类规则违反了检验科定位。单指标阈值产生的"标签"没有额外信息，LLM 自己能读到 ROE 数值
+3. **必须是跨域组合信号**：每条 Signal 必须至少跨越两个独立财务域（如利润表 × 现金流表），这是跨域组合的最低门槛
+4. **信号为空时必须静默**：若 `signals == []`，则输出层（`llm_view.py`）物理剔除该字段，绝不写入空列表或 `{"signals": []}` 占位。无异常 = 沉默，沉默 = 成本为零
+
+### 扫描信号的标准格式（信号设计合规模板）
+
+每条合规信号必须包含以下三个且只有三个字段：
+
+```python
+{
+    "id": str,          # 信号唯一标识符，snake_case，描述现象而非评价
+    "observation": str, # 冷峻的双语事实陈述，只有事实，没有评价
+    "metrics": dict,    # 支撑该事实的原始数值，字段名与指标命名完全一致
+}
+```
+
+合规示例：
+```python
+{
+    "id": "growth_vs_margin_trend",
+    "observation": "Revenue grew 28.5% YoY while net margin contracted 3.2 percentage points",
+    "metrics": {"revenue_yoy_pct": 0.285, "net_margin_delta": -0.032}
+}
+```
+
+违规示例（禁止）：
+```python
+# ❌ 包含定性词 "unsustainable"
+{"observation": "Revenue growth unsustainable as margin collapses 3.2pp"}
+# ❌ 单指标阈值标签
+{"id": "HIGH_ROE_WARNING", "observation": "ROE at 30.5% exceeds 20% threshold"}
+```
+
+### 指标命名-数值契约（全系统强制）
+
+> **命名即文档。名字是合同，数值是履约。**
+
+1. **`_pct` 后缀** → 值域严格 `< 1`（小数形式，`0.35` = 35%）
+2. **`_margin` / `_rate` / `_ratio` / `_yield` / `ROE` / `ROA`** → 同上，语义上是百分比，值域严格 `< 1`
+3. **`_delta` 后缀** → 两期差值的小数形式（`0.02` = 2 个百分点变化）
+4. **倍数类**（`pe_ttm` / `pb` / `current_ratio` / `equity_multiplier` / `coverage_ratio` / `turnover`）→ 原始倍数，可 `> 1`，命名不含 `_pct`/`_ratio` 语义混淆词
+
+**违规修复先例**：`revenue_yoy_pct` 曾返回 `35.04`（百分比形式），已于 C5 修正为 `0.3504`；`_delta_pp` 命名已全面更名为 `_delta` 以消除单位歧义。任何新增指标**在 PR 被合入前**必须通过以下断言：
+
+```python
+assert all(abs(v) < 1 for v in pct_metrics.values() if v is not None), \
+    "pct/rate/margin/yield metrics must be in decimal form"
+```
+
+### 扫描器的行业原型参考
+
+新增 Signal 时必须能对应一个**公认的金融行业分析范式**，例如：
+
+| Signal ID | 行业原型 |
+|-----------|---------|
+| `profit_vs_cashflow` | Sloan (1996) 应计异象 / Beneish M-Score |
+| `dividend_vs_free_cashflow` | S&P / Moody's 派息可持续性测试 |
+| `growth_vs_margin_trend` | McKinsey "增长质量" 框架 |
+| `solvency_stress` | Altman Z-Score 精神 / ICR 信贷红线 |
+| `earnings_quality_composition` | IPO 审核核心利润纯度标准 / CFA 盈利质量分析 |
+
