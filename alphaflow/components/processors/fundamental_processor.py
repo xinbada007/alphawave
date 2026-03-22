@@ -50,11 +50,15 @@ class FundamentalProcessor(BaseProcessor):
         pack.distilled_features.earnings_insights = EarningsAnalyzer.analyze(pack)
 
         # 7. 向黑板宣告：隐匿原始脏时序
-        pack.registry.claim_domain("insider_trading_history")
-        pack.registry.claim_domain("dividends_history")
-        pack.registry.claim_domain("earnings_calendar")
-        pack.registry.claim_domain("management_history")
-        pack.registry.claim_domain("splits_history")
+        from alphaflow.core.context import GlobalContext
+        is_debug = GlobalContext().get("DEBUG", False)
+        
+        if not is_debug:
+            pack.registry.claim_domain("insider_trading_history")
+            pack.registry.claim_domain("dividends_history")
+            pack.registry.claim_domain("earnings_calendar")
+            pack.registry.claim_domain("management_history")
+            pack.registry.claim_domain("splits_history")
 
         return ComponentOutput(success=True, payload=pack)
 
