@@ -25,8 +25,8 @@ DOMAIN_TREND = "trend_delta"
     ]
 )
 def calc_revenue_yoy(cur: float, prev: float) -> Optional[float]:
-    """营收 YoY 增长率 (%)"""
-    return round((cur - prev) / abs(prev) * 100, 2) if abs(prev) > 0 else None
+    """营收 YoY 增长率 (小数形式，0.35 = 35%)"""
+    return round((cur - prev) / abs(prev), 4) if abs(prev) > 0 else None
 
 
 @MetricEngine.fundamental_metric(
@@ -38,8 +38,8 @@ def calc_revenue_yoy(cur: float, prev: float) -> Optional[float]:
     ]
 )
 def calc_ni_yoy(cur: float, prev: float) -> Optional[float]:
-    """归母净利 YoY 增长率 (%)"""
-    return round((cur - prev) / abs(prev) * 100, 2) if abs(prev) > 0 else None
+    """归母净利 YoY 增长率 (小数形式，0.35 = 35%)"""
+    return round((cur - prev) / abs(prev), 4) if abs(prev) > 0 else None
 
 
 @MetricEngine.fundamental_metric(
@@ -51,8 +51,8 @@ def calc_ni_yoy(cur: float, prev: float) -> Optional[float]:
     ]
 )
 def calc_gp_yoy(cur: float, prev: float) -> Optional[float]:
-    """毛利 YoY 增长率 (%)"""
-    return round((cur - prev) / abs(prev) * 100, 2) if abs(prev) > 0 else None
+    """毛利 YoY 增长率 (小数形式，0.35 = 35%)"""
+    return round((cur - prev) / abs(prev), 4) if abs(prev) > 0 else None
 
 
 # ==========================================
@@ -60,7 +60,7 @@ def calc_gp_yoy(cur: float, prev: float) -> Optional[float]:
 # ==========================================
 
 @MetricEngine.fundamental_metric(
-    feature_name="gross_margin_delta_pp",
+    feature_name="gross_margin_delta",
     domain=DOMAIN_TREND,
     depends_on=[
         ("ANNUAL_LATEST", "income", Key.income.GROSS_PROFIT),
@@ -70,14 +70,14 @@ def calc_gp_yoy(cur: float, prev: float) -> Optional[float]:
     ]
 )
 def calc_gm_delta(gp_cur: float, rev_cur: float, gp_prev: float, rev_prev: float) -> Optional[float]:
-    """毛利率变化（百分点）"""
+    """毛利率变化（小数形式，0.02 = 2个百分点）"""
     if rev_cur == 0 or rev_prev == 0:
         return None
-    return round((gp_cur / rev_cur - gp_prev / rev_prev) * 100, 2)
+    return round(gp_cur / rev_cur - gp_prev / rev_prev, 4)
 
 
 @MetricEngine.fundamental_metric(
-    feature_name="net_margin_delta_pp",
+    feature_name="net_margin_delta",
     domain=DOMAIN_TREND,
     depends_on=[
         ("ANNUAL_LATEST", "income", Key.income.NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS),
@@ -87,14 +87,14 @@ def calc_gm_delta(gp_cur: float, rev_cur: float, gp_prev: float, rev_prev: float
     ]
 )
 def calc_nm_delta(ni_cur: float, rev_cur: float, ni_prev: float, rev_prev: float) -> Optional[float]:
-    """净利率变化（百分点）"""
+    """净利率变化（小数形式，0.02 = 2个百分点）"""
     if rev_cur == 0 or rev_prev == 0:
         return None
-    return round((ni_cur / rev_cur - ni_prev / rev_prev) * 100, 2)
+    return round(ni_cur / rev_cur - ni_prev / rev_prev, 4)
 
 
 @MetricEngine.fundamental_metric(
-    feature_name="roe_delta_pp",
+    feature_name="roe_delta",
     domain=DOMAIN_TREND,
     depends_on=[
         ("ANNUAL_LATEST", "income", Key.income.NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS),
@@ -104,7 +104,7 @@ def calc_nm_delta(ni_cur: float, rev_cur: float, ni_prev: float, rev_prev: float
     ]
 )
 def calc_roe_delta(ni_cur: float, eq_cur: float, ni_prev: float, eq_prev: float) -> Optional[float]:
-    """ROE 变化（百分点）"""
+    """ROE 变化（小数形式，0.02 = 2个百分点）"""
     if eq_cur == 0 or eq_prev == 0:
         return None
-    return round((ni_cur / eq_cur - ni_prev / eq_prev) * 100, 2)
+    return round(ni_cur / eq_cur - ni_prev / eq_prev, 4)

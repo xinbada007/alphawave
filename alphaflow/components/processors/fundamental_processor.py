@@ -4,7 +4,7 @@ from alphaflow.core.schema import AnalysisContext, ComponentOutput, ResearchPack
 from alphaflow.core.facade import to_facade
 from alphaflow.components.processors.engine import MetricEngine
 from alphaflow.components.processors.fundamentals.insider import InsiderAnalyzer
-from alphaflow.components.processors.fundamentals.health_tagger import generate_health_tags
+from alphaflow.components.processors.fundamentals.scanner import scan_fundamentals
 from alphaflow.components.processors.fundamentals.dividend import DividendAnalyzer
 
 # 触发全量声明式指标注册（6个域模块）
@@ -32,11 +32,12 @@ class FundamentalProcessor(BaseProcessor):
         # 2. trend_status 元判定（读已算的 trend_delta 域做联合裁决）
         self._synthesize_trend_status(pack)
 
-        # 3. 拯救孤儿：触发 HealthTagger，根据引擎算出的指标生成语义标签
+        # 3. 跨域扫描器：从已算指标中检测跨表事实信号
         if pack.distilled_features.fundamental_metrics:
-            health_tags = generate_health_tags(pack.distilled_features.fundamental_metrics)
+            signals = scan_fundamentals(pack.distilled_features.fundamental_metrics)
             # 🚀 显式赋值替代原地变异，与 exclude_unset=True 兼容
-            pack.distilled_features.fundamental_insights = {"health_tags": health_tags}
+            if signals:
+                pack.distilled_features.fundamental_insights = {"signals": signals}
 
         # 4. 高管交易降噪
         pack.distilled_features.insider_insights = InsiderAnalyzer.analyze(pack)
@@ -61,12 +62,12 @@ class FundamentalProcessor(BaseProcessor):
         if not td:
             return
 
-        deltas = [v for k, v in td.items() if k.endswith("_pp") and isinstance(v, (int, float))]
+        deltas = [v for k, v in td.items() if k.endswith("_delta") and isinstance(v, (int, float))]
         if not deltas:
             return
 
-        improving = sum(1 for d in deltas if d > 0.5)
-        declining = sum(1 for d in deltas if d < -0.5)
+        improving = sum(1 for d in deltas if d > 0.005)
+        declining = sum(1 for d in deltas if d < -0.005)
 
         if improving > declining:
             td["trend_status"] = "IMPROVING"
