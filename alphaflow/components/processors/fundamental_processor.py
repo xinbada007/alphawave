@@ -53,6 +53,8 @@ class FundamentalProcessor(BaseProcessor):
         pack.registry.claim_domain("insider_trading_history")
         pack.registry.claim_domain("dividends_history")
         pack.registry.claim_domain("earnings_calendar")
+        pack.registry.claim_domain("management_history")
+        pack.registry.claim_domain("splits_history")
 
         return ComponentOutput(success=True, payload=pack)
 
