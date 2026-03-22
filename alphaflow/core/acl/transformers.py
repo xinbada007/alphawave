@@ -279,6 +279,24 @@ def _tx_detect_cny_hkd_mismatch(val: Any, raw: Dict[str, Any]) -> bool:
     return has_hkd_cap and has_cny_val
 
 
+def _tx_extract_float(val: Any, raw: Dict[str, Any]) -> Optional[float]:
+    """
+    [Field-Level Transform] 宽容型浮点提取（N/A 安全）
+
+    YFinance 的 earnings_calendar 用字符串 "N/A" 表示缺失值。
+    此算子统一将其转为 None，有效数值转为 float。
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s in ("", "N/A", "n/a", "None", "null", "-", "--"):
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def _tx_extract_dividend_amount(val: Any, raw: Dict[str, Any]) -> Optional[float]:
     """
     [Field-Level Transform] 港股分红方案文本 → 每股金额（宁缺毋滥）

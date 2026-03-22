@@ -46,6 +46,17 @@ class DividendFeature(BaseModel):
     recent_timeline: Dict[str, List[str]] = Field(default_factory=dict)
 
 
+class EarningsFeature(BaseModel):
+    """财报超预期特征 - 强类型输出"""
+    earnings_status: str = "NO_DATA"  # ACTIVE / NO_DATA
+    total_reports: int = 0
+    beat_count: int = 0
+    beat_rate_pct: Optional[float] = None      # < 1, 小数形式
+    avg_surprise_pct: Optional[float] = None   # < 1, 小数形式
+    consecutive_beats: int = 0
+    next_report_date: Optional[str] = None
+
+
 class DistilledFeatures(BaseModel):
     """
     强类型高级特征，直供 LLM 消费，杜绝幻觉。
@@ -63,6 +74,7 @@ class DistilledFeatures(BaseModel):
     
     insider_insights: InsiderFeature = Field(default_factory=InsiderFeature)
     dividend_insights: DividendFeature = Field(default_factory=DividendFeature)
+    earnings_insights: EarningsFeature = Field(default_factory=EarningsFeature)
 
 # --- 基础数据契约 ---
 

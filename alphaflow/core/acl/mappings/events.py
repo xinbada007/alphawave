@@ -14,7 +14,12 @@ Track 2 专属的字段映射字典。
 """
 from typing import Any, Dict
 
-from alphaflow.core.acl.transformers import _tx_format_date, _tx_extract_dividend_amount
+from alphaflow.core.acl.transformers import (
+    _tx_format_date,
+    _tx_extract_dividend_amount,
+    _tx_extract_float,
+    _tx_normalize_pct,
+)
 
 
 # ==========================================
@@ -68,11 +73,39 @@ EVENT_STREAM_MAPPING: Dict[str, Dict[str, Any]] = {
         },
         "obb": ["payment_date"],
     },
+
+    # ===== earnings_calendar 事件流 =====
+    # 注意：US/HK 都走 yfinance_fetcher，其 provider_id = "obb"
+    "report_date": {
+        "obb": {
+            "aliases": ["report_date"],
+            "transform": _tx_format_date,
+        },
+    },
+    "eps_estimate": {
+        "obb": {
+            "aliases": ["EPS Estimate"],
+            "transform": _tx_extract_float,
+        },
+    },
+    "reported_eps": {
+        "obb": {
+            "aliases": ["Reported EPS"],
+            "transform": _tx_extract_float,
+        },
+    },
+    "surprise_pct": {
+        "obb": {
+            "aliases": ["Surprise(%)"],
+            "transform": _tx_normalize_pct,
+        },
+    },
 }
 
 # 日期字段候选列表（用于 period_ending 提取）
 DATE_CANDIDATES = [
     "ex_dividend_date",
+    "report_date",
     "date",
     "transaction_date",
     "filing_date",

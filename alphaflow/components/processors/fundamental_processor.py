@@ -6,6 +6,7 @@ from alphaflow.components.processors.engine import MetricEngine
 from alphaflow.components.processors.fundamentals.insider import InsiderAnalyzer
 from alphaflow.components.processors.fundamentals.scanner import scan_fundamentals
 from alphaflow.components.processors.fundamentals.dividend import DividendAnalyzer
+from alphaflow.components.processors.fundamentals.earnings import EarningsAnalyzer
 
 # 触发全量声明式指标注册（6个域模块）
 import alphaflow.components.processors.metrics  # noqa: F401
@@ -45,9 +46,13 @@ class FundamentalProcessor(BaseProcessor):
         # 5. 分红分析 (闭环漏洞 4)
         pack.distilled_features.dividend_insights = DividendAnalyzer.analyze(pack)
 
-        # 6. 向黑板宣告：隐匿原始脏时序
+        # 6. 财报超预期分析
+        pack.distilled_features.earnings_insights = EarningsAnalyzer.analyze(pack)
+
+        # 7. 向黑板宣告：隐匿原始脏时序
         pack.registry.claim_domain("insider_trading_history")
         pack.registry.claim_domain("dividends_history")
+        pack.registry.claim_domain("earnings_calendar")
 
         return ComponentOutput(success=True, payload=pack)
 
