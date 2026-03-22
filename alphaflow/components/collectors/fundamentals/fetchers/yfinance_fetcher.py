@@ -172,7 +172,8 @@ class YFinanceFetcher(BaseFetcher):
                     df.rename(columns={'Earnings Date': 'report_date'}, inplace=True)
                     df['report_date'] = pd.to_datetime(df['report_date']).dt.tz_localize(None).dt.strftime("%Y-%m-%d")
                     df = df.head(limit)  # 限制获取条数
-                    df = df.fillna("N/A")
+                    import numpy as np
+                    df = df.replace({np.nan: None})
                     return df.to_dict("records")
                 
                 return await asyncio.to_thread(_sync_fetch)
