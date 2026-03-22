@@ -167,14 +167,19 @@ class AkShareHKFetcher(BaseFetcher):
                         df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
                 
                 # Zero Divs 修复：数值型字段空值转为 None，让 Pydantic 优雅处理 Optional[float]
-                # 日期列之外的列，尝试转换为数值，失败则置为 None
+                import numpy as np
                 for col in df.columns:
                     if col not in date_cols:
-                        # 先尝试转换为数值类型
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-                    # 将 NaN 转为 None (包括日期列和数值列)
-                    # 使用 mask + fillna 组合，避免类型提示问题
-                    df[col] = df[col].mask(df[col].isna()).astype(object).fillna(None)
+                        # 对于非日期列，尝试安全地转换为数值
+                        # 如果是纯文本列（如"分红方案"），to_numeric 会全部变 NaN，所以需要保留无法转换的原始文本
+                        converted = pd.to_numeric(df[col], errors="coerce")
+                        # 仅当转换后不是全为 NaN，或者原本就全为空时，才认为是数值列进行替换
+                        # 否则保留原始的字符串（避免"每股派港币5.3元"被转成 None）
+                        if not bool(converted.isna().all()) or bool(df[col].isna().all()):
+                             df[col] = converted
+                    
+                    # 将 NaN 转为 None (包括日期列和数值列保留的空值)
+                    df[col] = df[col].replace({np.nan: None})
                 
                 # 按除净日排序
                 sort_col = None
