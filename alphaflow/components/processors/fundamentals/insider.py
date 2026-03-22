@@ -37,7 +37,12 @@ class InsiderAnalyzer:
         # 直接读取原始数据（无损透传）
         raw_data = pack.fundamentals.get("insider_trading_history", [])
         if not raw_data:
-            return InsiderFeature()  # 默认值 NEUTRAL
+            # 🚀 D3: 无数据 = "NO_DATA"（非 NEUTRAL）
+            # NEUTRAL 表示"有数据但买卖平衡"，NO_DATA 表示"此市场无数据源"
+            return InsiderFeature(
+                insider_status="NO_DATA",
+                insider_summary="No insider trading data available for this market.",
+            )
 
         # 180天截止线
         cutoff_date = datetime.now() - timedelta(days=180)
