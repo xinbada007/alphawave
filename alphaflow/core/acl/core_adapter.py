@@ -236,3 +236,84 @@ class DynamicFinancialAdapter:
                 print(f"  [Adapter] Validation dropped record: {e}")
                 
         return cleaned_records
+
+
+# ==========================================
+# 🚀 Track 2 事件流标准化引擎
+# 与 DynamicFinancialAdapter (Track 1) 平行对称
+#
+# 关键区别：
+# - Track 1: 白名单重建（只保留映射表中的字段）
+# - Track 2: 原地翻译（保留未映射字段，删除已消费的非标原始键）
+# ==========================================
+def normalize_events(
+    raw_data: List[Dict[str, Any]],
+    provider_id: str = "",
+) -> List[Dict[str, Any]]:
+    """
+    事件流字段标准化（BaseFetcher Track 2 的单行委托入口）
+
+    Args:
+        raw_data: 原始事件记录列表
+        provider_id: 数据源标识 ("akshare" / "obb" / "yfinance")
+
+    Returns:
+        标准化后的记录列表（原地修改）
+    """
+    from alphaflow.core.acl.mappings.events import EVENT_STREAM_MAPPING, DATE_CANDIDATES
+
+    if not raw_data or not provider_id:
+        return raw_data
+
+    # 编译当前 provider 的一维查找表：{原始别名: (标准键, transform_fn)}
+    lookup: Dict[str, tuple] = {}
+    for std_key, provider_configs in EVENT_STREAM_MAPPING.items():
+        cfg = provider_configs.get(provider_id)
+        if cfg is None:
+            continue
+
+        if isinstance(cfg, list):
+            for alias in cfg:
+                lookup[alias] = (std_key, None)
+        elif isinstance(cfg, dict):
+            transform_fn = cfg.get("transform")
+            for alias in cfg.get("aliases", []):
+                lookup[alias] = (std_key, transform_fn)
+
+    # 逐条记录执行映射
+    for item in raw_data:
+        mapped_keys: Dict[str, Any] = {}
+        consumed_originals: set = set()
+
+        for old_key in list(item.keys()):
+            if old_key in lookup:
+                std_key, transform_fn = lookup[old_key]
+                if std_key not in item and std_key not in mapped_keys:
+                    raw_val = item[old_key]
+                    if transform_fn:
+                        mapped_keys[std_key] = transform_fn(raw_val, item)
+                    else:
+                        mapped_keys[std_key] = raw_val
+                if old_key != std_key:
+                    consumed_originals.add(old_key)
+
+        item.update(mapped_keys)
+
+        # 清除已消费的非标原始键
+        for old_key in consumed_originals:
+            item.pop(old_key, None)
+
+        # period_ending 提取
+        if "period_ending" not in item:
+            for candidate in DATE_CANDIDATES:
+                date_val = item.get(candidate)
+                if date_val:
+                    try:
+                        item["period_ending"] = pd.to_datetime(date_val).strftime(
+                            "%Y-%m-%d"
+                        )
+                    except Exception:
+                        pass
+                    break
+
+    return raw_data

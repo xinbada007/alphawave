@@ -46,15 +46,35 @@ class DividendFeature(BaseModel):
     recent_timeline: Dict[str, List[str]] = Field(default_factory=dict)
 
 
+class EarningsFeature(BaseModel):
+    """财报超预期特征 - 强类型输出"""
+    earnings_status: str = "NO_DATA"  # ACTIVE / NO_DATA
+    total_reports: int = 0
+    beat_count: int = 0
+    beat_rate_pct: Optional[float] = None      # < 1, 小数形式
+    avg_surprise_pct: Optional[float] = None   # < 1, 小数形式
+    consecutive_beats: int = 0
+    next_report_date: Optional[str] = None
+
+
 class DistilledFeatures(BaseModel):
-    """强类型高级特征，直供 LLM 消费，杜绝幻觉"""
-    technical: Dict[str, Any] = Field(default_factory=dict)
-    fundamental_metrics: Dict[str, float] = Field(default_factory=dict)  # MetricEngine 产出
-    fundamental_insights: Dict[str, Any] = Field(default_factory=dict)   # Extractors 产出
+    """
+    强类型高级特征，直供 LLM 消费，杜绝幻觉。
     
-    # 强类型的业务洞察，彻底消灭 Dict
+    ⚠️ WRITE CONTRACT (写入契约):
+    所有字段必须使用 `self.field = value` 显式赋值。
+    绝对禁止 `self.field["key"] = value` 或 `self.field.append(x)` 原地变异。
+    原因：build_llm_view 使用 exclude_unset=True，
+    Pydantic V2 不将原地变异视为"已设置"，导致字段在序列化时静默蒸发。
+    """
+    technical: Dict[str, Any] = Field(default_factory=dict)
+    # 🚀 从 Dict[str, float] 放宽为 Dict[str, Any]，支持嵌套的语义域结构
+    fundamental_metrics: Dict[str, Any] = Field(default_factory=dict)
+    fundamental_insights: Dict[str, Any] = Field(default_factory=dict)
+    
     insider_insights: InsiderFeature = Field(default_factory=InsiderFeature)
     dividend_insights: DividendFeature = Field(default_factory=DividendFeature)
+    earnings_insights: EarningsFeature = Field(default_factory=EarningsFeature)
 
 # --- 基础数据契约 ---
 

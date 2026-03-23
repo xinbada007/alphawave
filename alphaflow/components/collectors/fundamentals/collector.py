@@ -25,7 +25,7 @@ from alphaflow.core.utils import (
 )
 
 from .strategies import USMarketStrategy, CNMarketStrategy, HKMarketStrategy
-from .helpers import get_fx_rate, audit_currency_context
+from .helpers import audit_currency_context, resolve_fx_rate
 
 
 class FundamentalCollector(BaseCollector):
@@ -147,13 +147,13 @@ class FundamentalCollector(BaseCollector):
         # TTM 计算与货币审计
         mcap_input = get_field_value(pack.market_metrics, Key.metrics.MARKET_CAP)
         
-        ttm_ni = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.NI), is_cum)
-        ttm_rev = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.REV), is_cum)
+        ttm_ni = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS), is_cum)
+        ttm_rev = calc_ttm_stitch(q_inc, a_inc, lambda x: get_field_value(x, Key.income.TOTAL_REVENUE), is_cum)
         ttm_fcf = calc_ttm_stitch(
             db.get("q_cash", []), db.get("a_cash", []),
             get_fcf_raw, is_cum
         )
-        equity = get_field_value(cur_bs, Key.balance.EQUITY) if cur_bs else None
+        equity = get_field_value(cur_bs, Key.balance.TOTAL_EQUITY_ATTRIBUTABLE_TO_PARENT) if cur_bs else None
         
         ttm_values = {
             "net_income": ttm_ni,
@@ -173,24 +173,7 @@ class FundamentalCollector(BaseCollector):
         
         # 汇率转换与安全赋值
         if currency_ctx.get("is_misaligned") and mcap_input is not None:
-            fx_rate = None
-            
-            # 1. 尝试网络获取实时汇率
-            if market_type == MarketType.HK:
-                fx_rate = await get_fx_rate("HKD", "CNY")
-            elif market_type == MarketType.US:
-                fx_rate = await get_fx_rate("USD", "CNY")
-            
-            # 2. 🚀 API 失败时的数学兜底防线
-            if fx_rate is None:
-                math_factor = currency_ctx.get("alignment_factor", 1.0)
-                # 校验数学因子的合理区间，防止离谱的财报数据污染
-                if market_type == MarketType.HK and 0.8 <= math_factor <= 1.1:
-                    fx_rate = math_factor
-                    print(f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}")
-                elif market_type == MarketType.US and 6.0 <= math_factor <= 8.5:
-                    fx_rate = math_factor
-                    print(f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}")
+            fx_rate = await resolve_fx_rate(market_type, currency_ctx)
             
             # 3. 最终写回
             if fx_rate is not None:
@@ -208,6 +191,14 @@ class FundamentalCollector(BaseCollector):
                         "HKD_CNY_MISMATCH_BY_LABEL"
                     ]:
                         pack.market_metrics[Key.metrics.IS_CNY_HKD_MISMATCH] = True
+        
+        # 🚀 具象化统一市值：MetricEngine 的盲消费入口
+        # coalesce(MARKET_CAP_RMB, MARKET_CAP) — 无论是否错配，引擎总能拿到正确的同币种市值
+        if pack.market_metrics is not None:
+            pack.market_metrics[Key.metrics.MARKET_CAP_ALIGNED] = (
+                pack.market_metrics.get(Key.metrics.MARKET_CAP_RMB)
+                or pack.market_metrics.get(Key.metrics.MARKET_CAP)
+            )
         
         # 公司名称 - 使用 ACL 映射的标准 Key
         if pack.fundamentals.get("profile"):

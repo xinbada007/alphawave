@@ -1,0 +1,21 @@
+{
+    "name": "Alphawave Dev Env",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "workspaceFolder": "/data/dev/alphawave",
+    "workspaceMount": "source=/data/dev/alphawave,target=/data/dev/alphawave,type=bind",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python"
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ]
+        }
+    },
+    "remoteUser": "root"
+}

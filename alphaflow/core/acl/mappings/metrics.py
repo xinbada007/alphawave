@@ -394,6 +394,7 @@ class MetricsKey:
     # ========== 派生指标 (Runtime Derived Fields) ==========
     MARKET_CAP_RMB: str = "MARKET_CAP_RMB"  # 汇率对齐后的市值
     FX_RATE: str = "FX_RATE"                # 实时汇率因子
+    MARKET_CAP_ALIGNED: str = "MARKET_CAP_ALIGNED"  # 与财报同币种的市值（引擎统一入口）
 
     # ========== 虚拟特征 (Virtual Features) ==========
     IS_CNY_HKD_MISMATCH: str = "IS_CNY_HKD_MISMATCH"  # 港股币种错配特征
@@ -477,6 +478,7 @@ class MetricsRecord(BaseModel):
     # ========== 派生指标 (Runtime Derived Fields) ==========
     MARKET_CAP_RMB: Optional[float] = None
     FX_RATE: Optional[float] = None
+    MARKET_CAP_ALIGNED: Optional[float] = None  # 与财报同币种的市值（引擎统一入口）
 
     # ========== 虚拟特征 (Virtual Features) ==========
     IS_CNY_HKD_MISMATCH: Optional[bool] = None  # 港股币种错配特征

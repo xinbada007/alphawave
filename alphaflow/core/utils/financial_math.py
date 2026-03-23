@@ -22,6 +22,7 @@ from alphaflow.core.utils.data_utils import (
     get_field_value,
     detect_report_type,
 )
+from alphaflow.core.keys import Key
 
 
 # ==========================================
@@ -282,14 +283,15 @@ def get_fcf_raw(item: Optional[Dict]) -> Optional[float]:
         return None
     
     # 先尝试直接获取 FCF
-    f = get_field_value(item, "FCF")
+    f = get_field_value(item, Key.cash.FREE_CASH_FLOW)
     if f is not None:
         return f
     
     # 如果没有，尝试通过 OCF - CAPEX 计算
-    o = get_field_value(item, "OCF")
-    c = get_field_value(item, "CAPEX")
+    o = get_field_value(item, Key.cash.OPERATING_CASH_FLOW)
+    c = get_field_value(item, Key.cash.CAPITAL_EXPENDITURE)
     if o is not None and c is not None:
         return o - abs(c)
     
     return None
+

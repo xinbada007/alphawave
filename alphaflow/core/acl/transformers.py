@@ -10,6 +10,7 @@
 - 不在 __init__.py 中导出，保持黑盒状态
 """
 
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 import pandas as pd
@@ -276,3 +277,46 @@ def _tx_detect_cny_hkd_mismatch(val: Any, raw: Dict[str, Any]) -> bool:
     has_cny_val = "基本每股收益(元)" in raw or "每股净资产(元)" in raw
     
     return has_hkd_cap and has_cny_val
+
+
+def _tx_extract_float(val: Any, raw: Dict[str, Any]) -> Optional[float]:
+    """
+    [Field-Level Transform] 宽容型浮点提取（N/A 安全）
+
+    YFinance 的 earnings_calendar 用字符串 "N/A" 表示缺失值。
+    此算子统一将其转为 None，有效数值转为 float。
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s in ("", "N/A", "n/a", "None", "null", "-", "--"):
+        return None
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _tx_extract_dividend_amount(val: Any, raw: Dict[str, Any]) -> Optional[float]:
+    """
+    [Field-Level Transform] 港股分红方案文本 → 每股金额（宁缺毋滥）
+
+    支持格式：
+      '每股派港币5.3元'     → 5.3
+      '每10股派3元'         → 0.3
+      '每股派末期息港币1.2元及特别息港币0.5元' → 1.7
+    """
+    text = val if isinstance(val, str) else None
+    if not text:
+        return None
+    # 处理"每N股"的情况
+    per_share = 1
+    m_per = re.search(r"每(\d+)股", text)
+    if m_per:
+        per_share = int(m_per.group(1))
+    # 提取所有金额并求和（覆盖"末期息+特别息"场景）
+    amounts = re.findall(r"(\d+\.?\d*)\s*元", text)
+    if not amounts:
+        return None
+    total = sum(float(a) for a in amounts)
+    return round(total / per_share, 4) if per_share > 0 else None

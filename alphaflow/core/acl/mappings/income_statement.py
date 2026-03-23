@@ -9,6 +9,8 @@
 - 严格一一映射：每个原始字段只映射一个标准字段
 
 更新日志：
+- 2026-03-17: 重构净利润映射，严格区分 NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS 和 NET_INCOME_CONSOLIDATED
+              删除所有向后兼容别名 (REV, NI, OI, GP, TAX)
 - 2026-03-11: 重构港股映射，基于 AkShare 港股利润表 32 个 STD_ITEM_NAME 逐一审计
               采用架构师裁决的标准字段命名，符合 IFRS/HKFRS 规范
 """
@@ -74,9 +76,12 @@ INCOME_STATEMENT_MAPPING: Dict[str, Dict[str, List[str]]] = {
     # 六、净利润 (Net Income)
     # ==========================================
     "TAX_PROVISION": {"obb": ["tax_provision"], "akshare": ["税项"]},
-    "NET_INCOME_CONSOLIDATED": {"obb": ["net_income"], "akshare": ["期内利润", "期内溢利"]},
-    "NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS": {"obb": ["net_income_including_noncontrolling_interests"], "akshare": ["除税后溢利"]},
-    "NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS": {"obb": ["net_income_attributable_to_common_shareholders"], "akshare": ["股东应占溢利"]},
+    # NET_INCOME_CONSOLIDATED: 仅保留最基础的 net_income 字面映射，作为各市场的通用 Bottom Line 兜底字段
+    "NET_INCOME_CONSOLIDATED": {"obb": ["net_income"], "akshare": ["净利润"]},
+    # NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS: 严格代表"扣除少数股东损益前的综合净利润"，用于计算 ROA、净利率
+    "NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS": {"obb": ["net_income_including_noncontrolling_interests"], "akshare": ["除税后溢利", "期内利润", "期内溢利"]},
+    # NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS: 严格代表"归母净利润"，用于计算 ROE
+    "NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS": {"obb": ["net_income_attributable_to_common_shareholders"], "akshare": ["股东应占溢利", "归属于母公司所有者的净利润"]},
     "NET_INCOME_CONTINUING_OPERATIONS": {"obb": ["net_income_continuous_operations"], "akshare": ["持续经营业务税后利润"]},
     "NET_INCOME_FROM_CONTINUING_AND_DISCONTINUED_OPERATIONS": {"obb": ["net_income_from_continuing_and_discontinued_operation"], "akshare": []},
     "DILUTED_NET_INCOME_AVAILABLE_TO_COMMON_STOCKHOLDERS": {"obb": ["diluted_ni_availto_com_stockholders"], "akshare": []},
@@ -227,13 +232,6 @@ class IncomeStatementKey:
     REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES: str = "REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES"
     DIVIDENDS_DECLARED_SUPPLEMENTARY: str = "DIVIDENDS_DECLARED_SUPPLEMENTARY"
     DIVIDEND_PER_SHARE_SUPPLEMENTARY: str = "DIVIDEND_PER_SHARE_SUPPLEMENTARY"
-    
-    # ========== 向后兼容别名 (Backward Compatibility Aliases) ==========
-    REV: str = TOTAL_REVENUE                    # 营收 -> 总营收
-    NI: str = NET_INCOME_CONSOLIDATED           # 净利润 -> 综合净利润
-    OI: str = OPERATING_INCOME                  # 营业利润
-    GP: str = GROSS_PROFIT                      # 毛利润
-    TAX: str = TAX_PROVISION                    # 所得税费用
 
 
 # ==========================================
@@ -292,9 +290,9 @@ class IncomeStatementRecord(BaseModel):
     
     # --- 6. 净利润 (Net Income) ---
     TAX_PROVISION: Optional[float] = None              # 税项
-    NET_INCOME_CONSOLIDATED: Optional[float] = None    # 股东应占溢利 (归母净利润)
-    NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS: Optional[float] = None  # 除税后溢利 (含少数股东净利润)
-    NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS: Optional[float] = None  # 归母净利润
+    NET_INCOME_CONSOLIDATED: Optional[float] = None    # 综合净利润 (通用 Bottom Line)
+    NET_INCOME_INCLUDING_NONCONTROLLING_INTERESTS: Optional[float] = None  # 除税后溢利 (含少数股东净利润，用于 ROA/净利率)
+    NET_INCOME_ATTRIBUTABLE_TO_COMMON_SHAREHOLDERS: Optional[float] = None  # 归母净利润 (用于 ROE)
     NET_INCOME_CONTINUING_OPERATIONS: Optional[float] = None  # 持续经营业务税后利润
     NET_INCOME_FROM_CONTINUING_AND_DISCONTINUED_OPERATIONS: Optional[float] = None  # 包含终止经营的净利润
     DILUTED_NET_INCOME_AVAILABLE_TO_COMMON_STOCKHOLDERS: Optional[float] = None  # 可供分配给稀释后股东的净利润
@@ -333,10 +331,3 @@ class IncomeStatementRecord(BaseModel):
     REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES: Optional[float] = None  # 重估盈余 (投资物业公允价值变动)
     DIVIDENDS_DECLARED_SUPPLEMENTARY: Optional[float] = None  # 股息 (附注，不参与利润加总)
     DIVIDEND_PER_SHARE_SUPPLEMENTARY: Optional[float] = None  # 每股股息 (附注)
-    
-    # ========== 向后兼容别名 (Backward Compatibility Aliases) ==========
-    REV: Optional[float] = None                        # 别名: TOTAL_REVENUE
-    NI: Optional[float] = None                         # 别名: NET_INCOME_CONSOLIDATED
-    OI: Optional[float] = None                         # 别名: OPERATING_INCOME
-    GP: Optional[float] = None                         # 别名: GROSS_PROFIT
-    TAX: Optional[float] = None                        # 别名: TAX_PROVISION

@@ -148,8 +148,13 @@ async def main():
         # 🚀 瑕疵 3 修复：彻底清理重复代码，只打印一次强类型特征
         if pack.distilled_features.fundamental_metrics:
             print("\n📊 [DISTILLED FUNDAMENTALS]")
-            for k, v in pack.distilled_features.fundamental_metrics.items():
-                print(f"   {k}: {v}")
+            for domain_name, domain_data in pack.distilled_features.fundamental_metrics.items():
+                if isinstance(domain_data, dict):
+                    print(f"   [{domain_name}]")
+                    for k, v in domain_data.items():
+                        print(f"     {k}: {v}")
+                else:
+                    print(f"   {domain_name}: {domain_data}")
             tags = pack.distilled_features.fundamental_insights.get("health_tags", [])
             if tags:
                 print(f"   Health Tags: {tags}")

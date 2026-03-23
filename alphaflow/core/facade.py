@@ -361,6 +361,12 @@ class ResearchPackFacade:
             return self.get_ttm_value(standard_key, stmt_type=stmt_type)
         elif period == "LATEST":
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="latest")
+        elif period == "ANNUAL_LATEST":
+            series = self.get_scoped_series("annual", stmt_type)
+            return get_field_value(series[0], standard_key) if series else None
+        elif period == "ANNUAL_PREV":
+            series = self.get_scoped_series("annual", stmt_type)
+            return get_field_value(series[1], standard_key) if len(series) >= 2 else None
         elif period == "ANNUAL":
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="annual")
         elif period == "QUARTERLY":
@@ -382,12 +388,15 @@ class ResearchPackFacade:
         """
         period = period_type.upper()
         d_lower = domain.lower()
-        
+
         # 核心：字典路由查表，O(1) 复杂度，无缝适应未来新增领域
         router_func = self._domain_routers.get(d_lower)
         if router_func:
-            return router_func(period, standard_key)
-            
+            result = router_func(period, standard_key)
+            if result is None:
+                print(f"  [Facade] ⚠️ Not found: {period} / {domain} / {standard_key}")
+            return result
+
         # 未知领域兜底防爆
         print(f"  [Facade] ⚠️ Unknown domain requested: {domain}")
         return None

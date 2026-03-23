@@ -5,18 +5,38 @@ from alphaflow.core.facade import ResearchPackFacade
 
 
 class MetricEngine:
-    """声明式基本面计算引擎 (V3 修订版：三元组精准注入)"""
+    """
+    声明式基本面计算引擎 (V4 语义域分桶)
+    
+    升级要点：
+    1. 装饰器增加 domain 参数，指标按语义域分桶
+    2. 输出嵌套 dict，域名即文档
+    3. 幂等防护：同名指标不重复注册
+    """
     _registry: List[Dict[str, Any]] = []
 
     @classmethod
-    def fundamental_metric(cls, feature_name: str, depends_on: List[Tuple[str, str, str]]):
+    def fundamental_metric(
+        cls,
+        feature_name: str,
+        domain: str,
+        depends_on: List[Tuple[str, str, str]],
+    ):
         """
-        高阶装饰器
-        depends_on 格式: [("TTM", "income", "NET_INCOME"), ("LATEST", "balance", "TOTAL_EQUITY")]
+        高阶装饰器 (V4)
+        
+        Args:
+            feature_name: 指标短名，域内唯一 (如 "ROE")
+            domain: 语义域标签 (如 "profitability_ttm")
+            depends_on: 计算依赖三元组列表
         """
         def decorator(func: Callable):
+            # 🚀 幂等防护：同名指标不重复注册
+            if any(m["feature_name"] == feature_name for m in cls._registry):
+                return func
             cls._registry.append({
                 "feature_name": feature_name,
+                "domain": domain,
                 "depends_on": depends_on,
                 "func": func
             })
@@ -28,13 +48,15 @@ class MetricEngine:
 
     @classmethod
     def execute_all(cls, facade: ResearchPackFacade, pack: ResearchPack):
-        """沙箱执行所有注册指标，自动防雷，自动写黑板"""
+        """沙箱执行所有注册指标，按域分桶输出"""
+        bucketed: Dict[str, Dict[str, float]] = {}
+        consumed_keys: set[str] = set()
+        
         for meta in cls._registry:
             try:
                 args = []
                 missing_data = False
                 
-                # 1. 自动依赖注入 (精准路由到特定报表)
                 for period_type, domain, standard_key in meta["depends_on"]:
                     val = facade.resolve_dependency(period_type, domain, standard_key)
                     if val is None:
@@ -42,20 +64,26 @@ class MetricEngine:
                         break
                     args.append(val)
                 
-                # 如果底层数据缺失，静默跳过，绝不报错
                 if missing_data:
+                    print(f"  [MetricEngine] ⚠️ Skipped '{meta['feature_name']}': Missing dependency [{domain}] -> {standard_key}")
                     continue
                 
-                # 2. 执行纯函数计算 (捕获除零等数学异常)
                 result = meta["func"](*args)
                 
                 if result is not None:
-                    # 3. 写入强类型输出槽位
-                    pack.distilled_features.fundamental_metrics[meta["feature_name"]] = result
+                    bucket_name = meta["domain"]
+                    if bucket_name not in bucketed:
+                        bucketed[bucket_name] = {}
+                    bucketed[bucket_name][meta["feature_name"]] = result
                     
-                    # 4. 【核心魔法】自动向黑板宣告消费！屏蔽原始冗余字段！
-                    for _, _, standard_key in meta["depends_on"]:
-                        pack.registry.claim_standard_key(standard_key)
+                    for _, _, sk in meta["depends_on"]:
+                        consumed_keys.add(sk)
                         
             except Exception as e:
                 print(f"  [MetricEngine] ⚠️ Error calculating {meta['feature_name']}: {e}")
+        
+        # 显式赋值触发 Pydantic V2 追踪
+        if bucketed:
+            pack.distilled_features.fundamental_metrics = bucketed
+        for key in consumed_keys:
+            pack.registry.claim_standard_key(key)
