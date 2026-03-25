@@ -29,8 +29,8 @@ class AkShareCNFetcher(BaseFetcher):
     
     async def _fetch_raw(self, task_name: str, symbol: str, **kwargs) -> List[Dict]:
         """任务翻译官：将标准化任务名翻译为 AkShare API"""
-        limit_a = kwargs.get("limit_a", 2)
-        limit_q = kwargs.get("limit_q", 5)
+        limit_a = kwargs["limit_a"]
+        limit_q = kwargs["limit_q"]
         
         # 解析任务名
         if task_name.endswith("_income"):

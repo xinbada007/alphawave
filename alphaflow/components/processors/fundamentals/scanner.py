@@ -140,8 +140,8 @@ def _scan_growth_vs_margin(
     行业原型: McKinsey "Growth that creates value" 框架
     逻辑: 营收增长 > 15% 但净利率同比萎缩超 2pp → 增收不增利
     """
-    rev_g = _get(metrics, "growth", "revenue_yoy_pct")
-    margin_d = _get(metrics, "trend_delta", "net_margin_delta")
+    rev_g = _get(metrics, "growth_ttm", "revenue_yoy_pct")
+    margin_d = _get(metrics, "trend_delta_ttm", "net_margin_delta")
 
     if rev_g is None or margin_d is None:
         return

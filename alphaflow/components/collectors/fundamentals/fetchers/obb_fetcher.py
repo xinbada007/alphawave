@@ -55,8 +55,8 @@ class OBBFetcher(BaseFetcher):
     
     async def _fetch_raw(self, task_name: str, symbol: str, **kwargs) -> List[Dict]:
         """任务翻译官：将标准化任务名翻译为 OpenBB 调用"""
-        limit_a = kwargs.get("limit_a", 2)
-        limit_q = kwargs.get("limit_q", 5)
+        limit_a = kwargs["limit_a"]
+        limit_q = kwargs["limit_q"]
         # DEFAULT_EARNINGS_LIMIT 默认提取 8 份财报（匹配 2 年季度/4 年半年度回溯基准）
         DEFAULT_EARNINGS_LIMIT = 8
         limit = kwargs.get("limit", DEFAULT_EARNINGS_LIMIT)
