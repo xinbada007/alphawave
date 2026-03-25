@@ -134,7 +134,7 @@ INCOME_STATEMENT_MAPPING: Dict[str, Dict[str, List[str]]] = {
     "NON_OPERATING_ITEMS": {"obb": [], "akshare": ["非运算项目"]},
     
     # 投资物业重估 (地产股核心科目)
-    "REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES": {"obb": [], "akshare": ["重估盈余"]},
+    "REVALUATION_SURPLUS": {"obb": [], "akshare": ["重估盈余"]},
     
     # 股息附注 (利润表附注信息，不参与加总)
     "DIVIDENDS_DECLARED_SUPPLEMENTARY": {"obb": [], "akshare": ["股息"]},
@@ -229,7 +229,7 @@ class IncomeStatementKey:
     OTHER_PROFIT_ITEMS: str = "OTHER_PROFIT_ITEMS"
     OTHER_OPERATING_REVENUE: str = "OTHER_OPERATING_REVENUE"
     NON_OPERATING_ITEMS: str = "NON_OPERATING_ITEMS"
-    REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES: str = "REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES"
+    REVALUATION_SURPLUS: str = "REVALUATION_SURPLUS"
     DIVIDENDS_DECLARED_SUPPLEMENTARY: str = "DIVIDENDS_DECLARED_SUPPLEMENTARY"
     DIVIDEND_PER_SHARE_SUPPLEMENTARY: str = "DIVIDEND_PER_SHARE_SUPPLEMENTARY"
 
@@ -328,6 +328,6 @@ class IncomeStatementRecord(BaseModel):
     OTHER_PROFIT_ITEMS: Optional[float] = None         # 溢利其他项目
     OTHER_OPERATING_REVENUE: Optional[float] = None    # 其他营业收入
     NON_OPERATING_ITEMS: Optional[float] = None        # 非运算项目
-    REVALUATION_SURPLUS_ON_INVESTMENT_PROPERTIES: Optional[float] = None  # 重估盈余 (投资物业公允价值变动)
+    REVALUATION_SURPLUS: Optional[float] = None  # 重估盈余 (公允价值变动等)
     DIVIDENDS_DECLARED_SUPPLEMENTARY: Optional[float] = None  # 股息 (附注，不参与利润加总)
     DIVIDEND_PER_SHARE_SUPPLEMENTARY: Optional[float] = None  # 每股股息 (附注)

@@ -55,6 +55,7 @@ class EarningsFeature(BaseModel):
     avg_surprise_pct: Optional[float] = None   # < 1, 小数形式
     consecutive_beats: int = 0
     next_report_date: Optional[str] = None
+    recent_history: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DistilledFeatures(BaseModel):

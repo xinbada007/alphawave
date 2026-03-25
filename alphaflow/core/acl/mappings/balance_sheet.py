@@ -21,6 +21,8 @@
 from typing import Dict, List, Optional
 from pydantic import BaseModel
 
+from alphaflow.core.acl.transformers import _tx_calc_net_working_capital
+
 
 # ==========================================
 # 1. OBB/AkShare → 标准字段映射表 (严格一一映射)
@@ -231,7 +233,10 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
         "akshare": ["总资产"]
     },
     "NET_WORKING_CAPITAL": {
-        "obb": [],
+        "obb": {
+            "aliases": [],
+            "transform": _tx_calc_net_working_capital
+        },
         "akshare": ["净流动资产"]
     },
     "TOTAL_EQUITY_AND_NON_CURRENT_LIABILITIES": {
@@ -324,7 +329,11 @@ BALANCE_SHEET_MAPPING: Dict[str, Dict[str, List[str]]] = {
     # ==========================================
     "LONG_TERM_DEBT": {
         "obb": ["long_term_debt"],
-        "akshare": ["长期贷款"]
+        "akshare": ["长期借款", "长期贷款"]
+    },
+    "BONDS_PAYABLE": {
+        "obb": ["bonds_payable"],
+        "akshare": ["应付债券"]
     },
     "NOTES_PAYABLE_NON_CURRENT": {
         "obb": [],
@@ -684,6 +693,7 @@ class BalanceSheetKey:
     # 📊 非流动负债 (Non-Current Liabilities)
     # ==========================================
     LONG_TERM_DEBT: str = "LONG_TERM_DEBT"
+    BONDS_PAYABLE: str = "BONDS_PAYABLE"
     NOTES_PAYABLE_NON_CURRENT: str = "NOTES_PAYABLE_NON_CURRENT"
     LONG_TERM_PAYABLES: str = "LONG_TERM_PAYABLES"
     CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT: str = "CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT"
@@ -884,6 +894,7 @@ class BalanceSheetRecord(BaseModel):
     # 📊 非流动负债 (Non-Current Liabilities)
     # ==========================================
     LONG_TERM_DEBT: Optional[float] = None
+    BONDS_PAYABLE: Optional[float] = None
     NOTES_PAYABLE_NON_CURRENT: Optional[float] = None
     LONG_TERM_PAYABLES: Optional[float] = None
     CAPITAL_LEASE_OBLIGATIONS_NON_CURRENT: Optional[float] = None

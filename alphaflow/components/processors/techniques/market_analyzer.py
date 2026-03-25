@@ -81,7 +81,7 @@ class MultiTimeframeMarketAnalyzer:
             # 计算成交量异动倍数
             df['volume_spike_ratio'] = df['volume'] / df['ADV_20']
             
-            # --- 模块3.1：机构资金流向指标 (CMF) ---
+            # --- 模块3.1：资金流向指标 (CMF) ---
             df.ta.cmf(length=21, append=True)
             
             # --- 模块3.2：上涨/下跌日成交量比 ---
@@ -94,28 +94,28 @@ class MultiTimeframeMarketAnalyzer:
         return df
     
     def _get_cmf_tag(self, cmf_value: float) -> Dict[str, str]:
-        """CMF 5档梯度语义映射"""
+        """CMF 5档梯度语义映射 (中立化表达)"""
         cfg = self._tag_config
-        if cmf_value >= cfg.CMF_STRONG_ACCUMULATION:
-            return {"tag": "[STRONG_ACCUMULATION]", "status": f"Strong Buying Pressure (>= {cfg.CMF_STRONG_ACCUMULATION})"}
-        elif cmf_value >= cfg.CMF_MODERATE_INFLOW:
-            return {"tag": "[MODERATE_INFLOW]", "status": f"Slight Bullish Edge ({cfg.CMF_MODERATE_INFLOW} to {cfg.CMF_STRONG_ACCUMULATION})"}
-        elif cmf_value >= cfg.CMF_MODERATE_OUTFLOW:
-            return {"tag": "[NEUTRAL_FLOW]", "status": f"Neutral ({cfg.CMF_MODERATE_OUTFLOW} to {cfg.CMF_MODERATE_INFLOW})"}
-        elif cmf_value >= cfg.CMF_STRONG_DISTRIBUTION:
-            return {"tag": "[MODERATE_OUTFLOW]", "status": f"Slight Bearish Edge ({cfg.CMF_STRONG_DISTRIBUTION} to {cfg.CMF_MODERATE_OUTFLOW})"}
+        if cmf_value >= cfg.CMF_STRONGLY_POSITIVE:
+            return {"tag": "[CMF_STRONGLY_POSITIVE]", "status": f">= {cfg.CMF_STRONGLY_POSITIVE}"}
+        elif cmf_value >= cfg.CMF_MILDLY_POSITIVE:
+            return {"tag": "[CMF_MILDLY_POSITIVE]", "status": f">= {cfg.CMF_MILDLY_POSITIVE}"}
+        elif cmf_value >= cfg.CMF_MILDLY_NEGATIVE:
+            return {"tag": "[CMF_NEAR_ZERO]", "status": "Neutral"}
+        elif cmf_value >= cfg.CMF_STRONGLY_NEGATIVE:
+            return {"tag": "[CMF_MILDLY_NEGATIVE]", "status": f"<= {cfg.CMF_MILDLY_NEGATIVE}"}
         else:
-            return {"tag": "[STRONG_DISTRIBUTION]", "status": f"Heavy Institutional Selling (<= {cfg.CMF_STRONG_DISTRIBUTION})"}
+            return {"tag": "[CMF_STRONGLY_NEGATIVE]", "status": f"<= {cfg.CMF_STRONGLY_NEGATIVE}"}
     
     def _get_up_down_vol_tag(self, ratio: float) -> Dict[str, str]:
-        """Up/Down Volume Ratio 3档梯度语义映射"""
+        """Up/Down Volume Ratio 3档梯度语义映射 (中立化表达)"""
         cfg = self._tag_config
-        if ratio > cfg.UP_DOWN_RATIO_BULL_THRESHOLD:
-            return {"tag": "[BUY_VOLUME_DOMINATING]", "status": f"Buy volume dominating (> {cfg.UP_DOWN_RATIO_BULL_THRESHOLD})"}
-        elif ratio < cfg.UP_DOWN_RATIO_BEAR_THRESHOLD:
-            return {"tag": "[SELL_VOLUME_DOMINATING]", "status": f"Sell volume dominating (< {cfg.UP_DOWN_RATIO_BEAR_THRESHOLD})"}
+        if ratio >= cfg.UP_DOWN_RATIO_HIGH_THRESHOLD:
+            return {"tag": "[UP_DAY_VOLUME_HIGH]", "status": f">= {cfg.UP_DOWN_RATIO_HIGH_THRESHOLD}"}
+        elif ratio <= cfg.UP_DOWN_RATIO_LOW_THRESHOLD:
+            return {"tag": "[DOWN_DAY_VOLUME_HIGH]", "status": f"<= {cfg.UP_DOWN_RATIO_LOW_THRESHOLD}"}
         else:
-            return {"tag": "[VOLUME_BALANCED]", "status": f"Volume balanced ({cfg.UP_DOWN_RATIO_BEAR_THRESHOLD} to {cfg.UP_DOWN_RATIO_BULL_THRESHOLD})"}
+            return {"tag": "[VOLUME_RATIO_NEUTRAL]", "status": "Neutral"}
 
     def _safe_float(self, value: Any, default: float = 0.0) -> float:
         if value is None or pd.isna(value) or np.isinf(value):
@@ -197,21 +197,21 @@ class MultiTimeframeMarketAnalyzer:
         if 'ADV_20' in latest.index:
             vol_data["adv_20"] = int(self._safe_float(latest['ADV_20']))
             
-        # --- CMF 机构资金流向 (带 NaN 兜底) ---
+        # --- CMF 资金流向 (带 NaN 兜底，去归因化) ---
         raw_cmf = latest.get("CMF_21")
         if raw_cmf is None or pd.isna(raw_cmf):
             cmf_value = 0.0
-            cmf_tag = {"tag": "[INSUFFICIENT_DATA]", "status": "Not enough trading days for CMF"}
+            cmf_tag = {"tag": "[INSUFFICIENT_DATA]", "status": "Not enough trading days"}
         else:
             cmf_value = self._safe_float(raw_cmf, 0.0)
             cmf_tag = self._get_cmf_tag(cmf_value)
-        vol_data["institutional_flow_metrics"] = {
+        vol_data["money_flow_metrics"] = {
             "indicator": "Chaikin Money Flow (CMF_21)",
             "value": round(cmf_value, 4),
             "threshold_status": cmf_tag["status"],
             "action_tag": cmf_tag["tag"]
         }
-        if cmf_tag["tag"] in ["[STRONG_ACCUMULATION]", "[STRONG_DISTRIBUTION]"]:
+        if cmf_tag["tag"] in ["[CMF_STRONGLY_POSITIVE]", "[CMF_STRONGLY_NEGATIVE]"]:
             tags.add(cmf_tag["tag"])
             
         # --- Up/Down Volume Ratio (带 NaN 兜底) ---
@@ -224,19 +224,19 @@ class MultiTimeframeMarketAnalyzer:
             up_down_tag = self._get_up_down_vol_tag(up_down_ratio)
         vol_data["up_down_volume_ratio"] = {
             "value": round(up_down_ratio, 2),
-            "implication": f"{up_down_tag['tag']} {up_down_tag['status']}"
+            "implication": f"{up_down_tag['tag']} ({up_down_tag['status']})"
         }
-        if up_down_tag["tag"] not in ["[VOLUME_BALANCED]", "[INSUFFICIENT_DATA]"]:
+        if up_down_tag["tag"] not in ["[VOLUME_RATIO_NEUTRAL]", "[INSUFFICIENT_DATA]"]:
             tags.add(up_down_tag["tag"])
             
-        # --- 使用配置文件的量价异常检测 ---
+        # --- 使用配置文件的量价异常检测 (纯物理判断) ---
         cfg = self._tag_config
         if latest_vol_ratio > cfg.VOLUME_SPIKE_MULTIPLIER and latest_daily_ret < cfg.VOLUME_SPIKE_DROP_THRESHOLD:
-            tags.add("[MASSIVE_DISTRIBUTION]")  # 放量暴跌
+            tags.add("[VOL_SPIKE_PRICE_DOWN]")  # 放量且收跌
         elif latest_vol_ratio > cfg.VOLUME_SPIKE_MULTIPLIER and latest_daily_ret > cfg.VOLUME_SPIKE_RALLY_THRESHOLD:
-            tags.add("[MASSIVE_ACCUMULATION]")  # 天量抢筹
+            tags.add("[VOL_SPIKE_PRICE_UP]")  # 放量且收涨
         elif latest_vol_ratio < cfg.VOLUME_CONTRACTION_MULTIPLIER and latest_daily_ret < cfg.VOLUME_CONTRACTION_DROP_THRESHOLD:
-            tags.add("[LOW_CONVICTION_SELLOFF]")  # 缩量阴跌
+            tags.add("[VOL_CONTRACTION_PRICE_DOWN]")  # 缩量且收跌
             
         # ==========================================
         # 缺口检测 (Unfilled Gap)

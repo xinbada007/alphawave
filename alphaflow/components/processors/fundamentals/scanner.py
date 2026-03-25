@@ -211,26 +211,55 @@ def _scan_earnings_quality(
     metrics: Dict[str, Any], signals: List[Dict[str, Any]]
 ) -> None:
     """
-    Signal 5: 核心利润纯度
-    行业原型: IPO 审核标准 + CFA 盈利质量分析
-    逻辑: 核心利润占税前利润 < 70% → 大量非经常性损益
+    Signal 5: 核心利润纯度（双轨制探测器）
+    学术原型: IPO 审核标准 + CFA 盈利质量分析 + IFRS 非经常性损益剥离
+    触发条件（满足任一即触发）：
+      A. |core_profit_ratio - core_profit_ratio_ex_non_recurring| ≥ 20pp
+      B. core_profit_ratio < 0.70
+      C. core_profit_ratio_ex_non_recurring < 0.65
     """
     cpr = _get(metrics, "earnings_quality_latest", "core_profit_ratio")
+    cpr_ex = _get(metrics, "earnings_quality_latest", "core_profit_ratio_ex_non_recurring")
     gpa = _get(metrics, "earnings_quality_latest", "gross_profit_to_assets")
 
     if cpr is None:
         return
-    if cpr >= 0.70:
+
+    observations = []
+    signal_metrics: Dict[str, Any] = {"core_profit_ratio": cpr}
+
+    if cpr_ex is not None:
+        signal_metrics["core_profit_ratio_ex_non_recurring"] = cpr_ex
+        delta_pp = round(abs(cpr - cpr_ex) * 100, 1)
+        signal_metrics["delta_pp"] = delta_pp
+
+        # 条件 A：双指标对比法（≥ 20pp 敞口）
+        if delta_pp >= 20.0:
+            observations.append(
+                f"Statutory core profit ratio ({cpr:.1%}) vs ex-non-recurring ({cpr_ex:.1%}), "
+                f"delta {delta_pp:.1f}pp"
+            )
+
+        # 条件 C：纯净口径单指标阈值法
+        if cpr_ex < 0.65:
+            observations.append(
+                f"Core profit ratio ex non-recurring at {cpr_ex:.1%} of pre-tax income"
+            )
+
+    # 条件 B：法定口径单指标阈值法（保留原有能力）
+    if cpr < 0.70:
+        observations.append(
+            f"Statutory core profit ratio at {cpr:.1%} of pre-tax income"
+        )
+
+    if not observations:
         return
 
-    signal_metrics = {"core_profit_ratio": cpr}
     if gpa is not None:
         signal_metrics["gross_profit_to_assets"] = gpa
 
     signals.append({
         "id": "earnings_quality_composition",
-        "observation": (
-            f"Core operating profit accounts for {cpr:.1%} of pre-tax income"
-        ),
+        "observation": "; ".join(observations),
         "metrics": signal_metrics,
     })

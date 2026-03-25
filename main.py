@@ -19,9 +19,9 @@ from alphaflow.core.presenters.llm_view import build_llm_view
 # from alphaflow.components.visualizers.charting import QuickChartVisualizer
 
 
-def upload_to_file_io(pack_data: str) -> str:
+def upload_to_file_io(pack_data: str, symbol: str) -> str:
     """使用 tmpfiles.org 将数据作为文本文件上传并返回短链接"""
-    file_path = "last_research_pack.txt"
+    file_path = f"{symbol}.txt"
     try:
         # 1. 先存为文本文件作为备份
         with open(file_path, "w", encoding="utf-8") as f:
@@ -178,7 +178,7 @@ async def main():
         llm_payload = build_llm_view(pack)
         
         print("   Uploading clean, distilled research pack to file.io...")
-        short_link = upload_to_file_io(llm_payload)
+        short_link = upload_to_file_io(llm_payload, pack.symbol)
         print(f"   SHORT LINK: {short_link}")
         print("   (Note: This link is valid for 60 mins.)")
 

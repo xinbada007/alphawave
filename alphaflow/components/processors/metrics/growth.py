@@ -108,3 +108,29 @@ def calc_roe_delta(ni_cur: float, eq_cur: float, ni_prev: float, eq_prev: float)
     if eq_cur == 0 or eq_prev == 0:
         return None
     return round(ni_cur / eq_cur - ni_prev / eq_prev, 4)
+
+
+@MetricEngine.fundamental_metric(
+    feature_name="operating_income_yoy_pct",
+    domain=DOMAIN_GROWTH,
+    depends_on=[
+        ("ANNUAL_LATEST", "income", Key.income.OPERATING_INCOME),
+        ("ANNUAL_PREV", "income", Key.income.OPERATING_INCOME),
+    ]
+)
+def calc_oi_yoy(cur: float, prev: float) -> Optional[float]:
+    """核心营业利润 YoY 增长率 — 剔除联营/一次性收益的主业纯真增长"""
+    return round((cur - prev) / abs(prev), 4) if abs(prev) > 0 else None
+
+
+@MetricEngine.fundamental_metric(
+    feature_name="operating_cashflow_yoy_pct",
+    domain=DOMAIN_GROWTH,
+    depends_on=[
+        ("ANNUAL_LATEST", "cash", Key.cash.OPERATING_CASH_FLOW),
+        ("ANNUAL_PREV", "cash", Key.cash.OPERATING_CASH_FLOW),
+    ]
+)
+def calc_ocf_yoy(cur: float, prev: float) -> Optional[float]:
+    """经营现金流 YoY 增长率 — 利润有没有真正落地的试金石"""
+    return round((cur - prev) / abs(prev), 4) if abs(prev) > 0 else None

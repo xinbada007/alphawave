@@ -361,6 +361,28 @@ class ResearchPackFacade:
             return self.get_ttm_value(standard_key, stmt_type=stmt_type)
         elif period == "LATEST":
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="latest")
+        elif period == "AVERAGE_1Y":
+            v_cur = self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="latest")
+            v_prev = None
+            q_series = self.get_scoped_series("quarterly", stmt_type)
+            if q_series and len(q_series) > 0:
+                cur_dt = q_series[0].get("PERIOD_ENDING")
+                if cur_dt:
+                    target_dt = pd.to_datetime(cur_dt) - pd.DateOffset(years=1)
+                    prev_rep = find_closest_strictly(q_series, target_dt, window=45)
+                    if not prev_rep:
+                        a_series = self.get_scoped_series("annual", stmt_type)
+                        if a_series:
+                            prev_rep = a_series[0] if a_series[0].get("PERIOD_ENDING") != cur_dt else (a_series[1] if len(a_series) > 1 else None)
+                    if prev_rep:
+                        v_prev = get_field_value(prev_rep, standard_key)
+            if v_prev is None:
+                a_series = self.get_scoped_series("annual", stmt_type)
+                if a_series and len(a_series) >= 2:
+                    v_prev = get_field_value(a_series[1], standard_key)
+            if v_cur is not None and v_prev is not None:
+                return (v_cur + v_prev) / 2.0
+            return v_cur
         elif period == "ANNUAL_LATEST":
             series = self.get_scoped_series("annual", stmt_type)
             return get_field_value(series[0], standard_key) if series else None
@@ -371,6 +393,15 @@ class ResearchPackFacade:
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="annual")
         elif period == "QUARTERLY":
             return self.get_snapshot_value(standard_key, stmt_type=stmt_type, period="quarterly")
+        elif period == "SEMIANNUAL_LATEST":
+            # 纯新增锚点：从季报 YTD 序列中定位最新的半年报 (REPORT_TYPE == 'semiannual')
+            # 保证所有同期 SEMIANNUAL_LATEST 依赖解析到完全相同的 PERIOD_ENDING
+            q_series = self.get_scoped_series("quarterly", stmt_type)
+            for record in q_series:
+                rt = record.get("REPORT_TYPE", "")
+                if rt == "semiannual":
+                    return get_field_value(record, standard_key)
+            return None
         return None
 
     def resolve_dependency(self, period_type: str, domain: str, standard_key: str) -> Optional[float]:

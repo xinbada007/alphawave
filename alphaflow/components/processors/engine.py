@@ -1,4 +1,4 @@
-from typing import Callable, List, Tuple, Dict, Any
+from typing import Callable, List, Optional, Tuple, Dict, Any
 from functools import wraps
 from alphaflow.core.schema.models import ResearchPack
 from alphaflow.core.facade import ResearchPackFacade
@@ -21,14 +21,18 @@ class MetricEngine:
         feature_name: str,
         domain: str,
         depends_on: List[Tuple[str, str, str]],
+        optional_depends_on: Optional[List[Tuple[str, str, str]]] = None,
     ):
         """
-        高阶装饰器 (V4)
+        高阶装饰器 (V4.1)
         
         Args:
             feature_name: 指标短名，域内唯一 (如 "ROE")
             domain: 语义域标签 (如 "profitability_ttm")
-            depends_on: 计算依赖三元组列表
+            depends_on: 强制依赖三元组列表（缺失任一则跳过计算）
+            optional_depends_on: 弱依赖三元组列表（缺失时传 None，不阻断计算）
+                                 注意：函数签名的参数顺序必须严格匹配
+                                 depends_on 在前，optional_depends_on 在后
         """
         def decorator(func: Callable):
             # 🚀 幂等防护：同名指标不重复注册
@@ -38,6 +42,7 @@ class MetricEngine:
                 "feature_name": feature_name,
                 "domain": domain,
                 "depends_on": depends_on,
+                "optional_depends_on": optional_depends_on or [],
                 "func": func
             })
             @wraps(func)
@@ -53,20 +58,28 @@ class MetricEngine:
         consumed_keys: set[str] = set()
         
         for meta in cls._registry:
+            dep_domain = ""
+            dep_key = ""
             try:
-                args = []
+                args: List[Any] = []
                 missing_data = False
                 
-                for period_type, domain, standard_key in meta["depends_on"]:
-                    val = facade.resolve_dependency(period_type, domain, standard_key)
+                # 强依赖：缺失任一即跳过
+                for period_type, dep_domain, dep_key in meta["depends_on"]:
+                    val = facade.resolve_dependency(period_type, dep_domain, dep_key)
                     if val is None:
                         missing_data = True
                         break
                     args.append(val)
                 
                 if missing_data:
-                    print(f"  [MetricEngine] ⚠️ Skipped '{meta['feature_name']}': Missing dependency [{domain}] -> {standard_key}")
+                    print(f"  [MetricEngine] ⚠️ Skipped '{meta['feature_name']}': Missing dependency [{dep_domain}] -> {dep_key}")
                     continue
+                
+                # 弱依赖：缺失时传 None，不阻断计算
+                for period_type, dep_domain, dep_key in meta.get("optional_depends_on", []):
+                    val = facade.resolve_dependency(period_type, dep_domain, dep_key)
+                    args.append(val)  # None is OK
                 
                 result = meta["func"](*args)
                 
@@ -77,6 +90,8 @@ class MetricEngine:
                     bucketed[bucket_name][meta["feature_name"]] = result
                     
                     for _, _, sk in meta["depends_on"]:
+                        consumed_keys.add(sk)
+                    for _, _, sk in meta.get("optional_depends_on", []):
                         consumed_keys.add(sk)
                         
             except Exception as e:

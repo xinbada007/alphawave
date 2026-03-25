@@ -57,7 +57,9 @@ class OBBFetcher(BaseFetcher):
         """任务翻译官：将标准化任务名翻译为 OpenBB 调用"""
         limit_a = kwargs.get("limit_a", 2)
         limit_q = kwargs.get("limit_q", 5)
-        limit = kwargs.get("limit", 8)  # 🚀 earnings_cal 默认 8 条
+        # DEFAULT_EARNINGS_LIMIT 默认提取 8 份财报（匹配 2 年季度/4 年半年度回溯基准）
+        DEFAULT_EARNINGS_LIMIT = 8
+        limit = kwargs.get("limit", DEFAULT_EARNINGS_LIMIT)
         
         # 1. 字典映射的简单任务
         if task_name in self.TASK_CONFIG:
@@ -175,7 +177,7 @@ class OBBFetcher(BaseFetcher):
 
         try:
             # 2. 计算时间窗口 (关键修复)
-            # 默认回溯 3 年 (确保能覆盖 limit=8 即 2 年的数据，留有余量)
+            # 默认回溯 3 年 (确保在动态 limit 请求下能覆盖绝大多数场景)
             # 往后推 1 个月 (涵盖即将发布的一次财报)
             now = datetime.now()
             start_date = (now - pd.Timedelta(days=3 * 365)).strftime("%Y-%m-%d")
