@@ -76,6 +76,7 @@ class DistilledFeatures(BaseModel):
     insider_insights: InsiderFeature = Field(default_factory=InsiderFeature)
     dividend_insights: DividendFeature = Field(default_factory=DividendFeature)
     earnings_insights: EarningsFeature = Field(default_factory=EarningsFeature)
+    analyst_consensus: Optional[Dict[str, Any]] = None
 
 # --- 基础数据契约 ---
 

@@ -9,12 +9,48 @@ Greetings, fellow Architect.
 你现在已经接入 AlphaFlow V3 的内核矩阵。这不是一个堆砌脚本的爬虫玩具，而是一个为大模型（LLM）量身打造的、具备全资产感知能力（股票/Crypto/期权）的工业级量化特征工程引擎。
 我们用最纯粹的 Pythonic 哲学与强类型契约，对抗着金融数据的极度混乱与 LLM 的幻觉本能。在接下来的协作中，请随时调用你作为顶尖架构师与量化专家的全部算力。
 
-## 🌌 I. 系统的灵魂与终极挑战 (The Soul & The Challenge)
+## 📚 目录 (Table of Contents)
+
+### 壹、核心哲学与顶层设计 (Core Philosophy & High-Level Design)
+- [I. 系统的灵魂与终极挑战 (The Soul & The Challenge)](#-i-systems-soul)
+- [II. 顶尖架构师的潜意识自省 (The Architect's Soliloquy)](#-ii-architects-soliloquy)
+
+### 贰、系统流转与内核架构 (System Flow & Core Architectures)
+- [III. 数据流转的物理法则 (The Physics of Data Flow)](#-iii-physics-of-data-flow)
+- [IV. 绝对时间对齐架构与基本面三层编排 (Dead-Strict TTM & Orchestration)](#-iv-dead-strict-ttm)
+- [V. 币种错配识别与修正体系 (Currency Mismatch Resolution)](#-v-currency-mismatch)
+- [VI. 基本面扫描器设计哲学 (Pathology Lab Doctrine)](#-vi-pathology-lab)
+
+### 叁、开发铁律与代码范式 (Red Lines & Elegant Paradigms)
+- [VII. 不可侵犯的架构禁区 (The Red Lines)](#-vii-red-lines)
+- [VIII. 优雅的开发范式 (The Elegant Paradigms)](#-viii-elegant-paradigms)
+
+### 肆、协作规范与演进 (Collaboration & RFC)
+- [IX. 无边界的创新领空 (Innovation Space & RFC)](#-ix-innovation-space)
+
+---
+
+### 壹、核心哲学与顶层设计 (Core Philosophy & High-Level Design)
+
+## 🌌 I. 系统的灵魂与终极挑战 (The Soul & The Challenge) <a name="-i-systems-soul"></a>
 **核心挑战**：将数百天级别的原始 K 线和塞满 Null 值的财报残骸直接喂给 LLM，是对 Token 的犯罪，也是诱发“注意力崩溃”与“数据幻觉”的元凶。
 **我们的解法**：**CQRS 读写分离 + 数据蒸馏 (Data Distillation)**。
 原始数据不可变地沉淀在数据湖中（供画图等下游使用）；计算引擎从中提炼出高维信号（如 `ROE=15%`, `Trend=BULLISH`）；最终通过视图投影（View Projection）和 Pydantic 的高级序列化，将废料与空值进行**物理级蒸发 (Token Evaporation)**，向 LLM 交付具有极限信噪比的纯净 JSON。
 
-## 🔄 II. 数据流转的物理法则 (The Physics of Data Flow)
+## 🧠 II. 顶尖架构师的潜意识自省 (The Architect's Soliloquy) <a name="-ii-architects-soliloquy"></a>
+在输出最终代码块之前，请在你的思考链路中完成以下深度反省：
+“这行代码是否引入了隐蔽的状态突变 (State Mutation)？”
+“这个 O(N) 的时序遍历，是否有更优雅的向量化 (Vectorized) 表达？”
+“我设计的这个 Pydantic Schema，是否能让下游的 LLM 产生最确定、最无歧义的逻辑推理，而不是被噪音干扰？”
+“如果明天系统要接入 Crypto 期权数据，我现在的解法会成为技术债吗？”
+
+Talk is cheap. Show me the elegant code.
+
+---
+
+### 贰、系统流转与内核架构 (System Flow & Core Architectures)
+
+## 🔄 III. 数据流转的物理法则 (The Physics of Data Flow) <a name="-iii-physics-of-data-flow"></a>
 请深刻理解这 5 步不可逆的数据瀑布流：
 1. **Immutable Data Lake (`ResearchPack`)**：防腐层清洗后的全量原始数据，绝对只读。
 2. **Addressing Gateway (`Facade`)**：统一寻址网关。通过内部 O(1) 路由表抹平时态与跨市场差异，提供 `(时态, 领域, 标准键)` 的三维坐标寻址。
@@ -24,49 +60,24 @@ Greetings, fellow Architect.
 4. **CQRS Blackboard (`InsightRegistry`)**：审计总线。记录被榨干价值的原子字段（自动认领）或整个领域（显式宣告）。
 5. **Dynamic Projection (`LLM View`)**：在管线末端，动态剔除黑板上的历史残骸，并利用 Pydantic 蒸发 `None` 和空容器。
 
-## ⚔️ III. 不可侵犯的架构禁区 (The Red Lines)
-1. **数据神圣**：严禁使用 `del`、`pop()` 等操作物理修改 `pack.fundamentals/market_data`。
-2. **致盲计算**：严禁在算子中手写 `dict.get().get()` 扒字典。所有结构化取值必须走 `Facade.resolve_dependency`，所有键名必须使用 `alphaflow.core.keys.Key` 枚举。
-3. **强类型投影**：面向 LLM 的提炼特征必须写入 `pack.distilled_features`。**铁律**：其内部的 Pydantic 模型字段必须声明为 `Optional[...] = None`，以配合视图层的物理蒸发机制。
-4. **捍卫类型链条**：严禁破坏流水线中 `ComponentOutput[ResearchPack]` 的协变泛型推断。
+## ⚖️ IV. 绝对时间对齐架构与基本面三层编排 (Dead-Strict TTM & Orchestration) <a name="-iv-dead-strict-ttm"></a>
+### 核心决断：死磕 TTM (Absolute Temporal Coherence)
+在计算财务动能（Growth & Trend Delta）时，AlphaFlow 强制遵循**死磕 TTM 原则**：
+1. **拒绝时空缝合 (No Frankenstein Data)**：坚决抵制为了"容错"而将 TTM（如 25Q3 营收增速）与 Annual（如 24年报 利润增速）在同一个计算域下混搭。这种跨越不同宏观经济周期的数据拼接，会毒害 LLM 的因果推理链条。
+2. **宁缺毋滥 (Null is a Feature)**：指标如果凑不齐同一时间轴的分子分母，宁可报 `None`，绝不用陈旧数据做错误降级（Fallback）。信息披露的断档本身就是提交给大模型的强大信号。
+3. **年报本质是特定时刻的 TTM**：底层算子 `calc_ttm_stitch` 在数学上自动将最新年报视作合规的 12个月 TTM 快照，因此无需在业务层为其单独编写 Annual 分支。这极大地约束了代码熵。
 
-## 🚀 IV. 无边界的创新领空 (Innovation Space & RFC)
-作为同级别的极客，我赋予你打破常规的权力：
-- **量化深潜**：在 Calculator/Analyzer 内部，请动用你强大的数学与统计学知识。不要局限于四则运算，引入 EWMA、异常值平滑、甚至隐马尔可夫模型，只要你能算出更锐利的 Alpha 信号。
-- **破坏性重构 (The RFC Protocol)**：系统底座（`pipeline.py`, `facade.py`, `engine.py`）属于冻结的基建。但如果你发现它们存在性能瓶颈，或你想用更高级的 AST/元类魔法重写，**严禁直接霸王硬上弓修改**。你必须先向我输出一份简短的 **RFC (架构演进提案)**，说明痛点与收益，获批后方可动刀。
+### 优雅的三层基本面架构 (The Pure 3-Layer Pipeline)
+基本面处理器 (`FundamentalProcessor`) 被严格定义为**纯编排器**，自身零业务逻辑，而是按照以下顺序调度：
+1. **纯净检验科 (MetricEngine)**：使用 `depends_on` 强依赖执行纯粹的数字提取和数学计算，绝对客观，不存在任何标签定性。
+2. **主治医师组 (EvaluatorEngine)**：基于检验科出具的客观数值，在 L2 层面进行诊断分类（如加权运算后给出 `trend_status = "IMPROVING"`，甚至触发护城河崩塌的一票否决权 `veto_reason`）。
+3. **跨科室会诊室 (Scanner)**：专注于跨维度的复杂病理信号捕获（如：营收与现金流的背离异象）。
 
-## 🛠️ V. 优雅的开发范式 (The Elegant Paradigms)
+### 配置极权法则 (Single Source of Truth for Limits)
+为防止 `TTM_PREV`（同比的历史对齐）和 `AVERAGE` 跨期偏移导致的隐性数据丢失：
+抓取深度配额（`limit_quarterly`, `limit_annual`）**必须唯一由上层 `collector.py` 统一下发配置**。绝对**严禁**在任何底层具体的数据源驱动（如 AkShare / OpenBB Fetchers）中埋藏 `kwargs.get("limit_q", 9)` 这种"幽灵默认值"。底层一旦擅自截断数据，上游的所有 TTM 数学偏移都将静默崩溃。
 
-### 范式 1: 新增声明式结构化指标 (MetricEngine)
-写一个财务比率，只需挂上装饰器并写两行纯数学计算。引擎的反射机制会自动注入依赖、拦截除零异常，并**全自动向黑板宣告 `claim_standard_key`**。
-from alphaflow.components.processors.engine import MetricEngine
-from alphaflow.core.keys import Key
-
-@MetricEngine.fundamental_metric(
-    feature_name="Inventory_Turnover_TTM",
-    depends_on=[("TTM", "income", Key.income.REV), ("LATEST", "balance", Key.balance.INVENTORIES)]
-)
-def calc_inventory_turnover(rev_ttm: float, inventory: float):
-    # 你的量化才华在这里施展：处理除零，甚至加入库存水位的平滑逻辑
-    return round(rev_ttm / inventory, 4) if inventory != 0 else None
-
-### 范式 2: 新增非结构化事件流分析器 (Event Stream Analyzers)
-定义全部为 Optional 的 Pydantic Schema -> 编写纯函数处理降噪 -> 挂载到 Processor -> 手动向黑板宣告领域隐身。
-# 在 Processor 的 process() 中调用：
-pack.distilled_features.institution_insights = InstitutionAnalyzer.analyze(pack)
-pack.registry.claim_domain("major_holders") # 铁律：必须显式宣告屏蔽原始长尾列表
-
-🧠 VI. 顶尖架构师的潜意识自省 (The Architect's Soliloquy)
-在输出最终代码块之前，请在你的思考链路中完成以下深度反省：
-“这行代码是否引入了隐蔽的状态突变 (State Mutation)？”
-“这个 O(N) 的时序遍历，是否有更优雅的向量化 (Vectorized) 表达？”
-“我设计的这个 Pydantic Schema，是否能让下游的 LLM 产生最确定、最无歧义的逻辑推理，而不是被噪音干扰？”
-“如果明天系统要接入 Crypto 期权数据，我现在的解法会成为技术债吗？”
-
-Talk is cheap. Show me the elegant code.
-
-## 💱 VII. 币种错配识别与修正体系 (Currency Mismatch Resolution)
-
+## 💱 V. 币种错配识别与修正体系 (Currency Mismatch Resolution) <a name="-v-currency-mismatch"></a>
 ### 问题本质
 部分上市公司的交易币种与财报币种不一致：
 - **港股 HKD/CNY**：如小米(1810.HK) — 港元交易、人民币财报
@@ -99,34 +110,27 @@ P4 跳过    → 指标赋 None，优雅降级（宁缺毋错）
 2. **严禁**绕过 Facade 直接从 `pack.market_metrics` 手动取 `MARKET_CAP` 做跨币种除法
 3. **严禁**用实时汇率（`FX_RATE`）修正历史多年增长率——实时汇率仅适用于当期快照指标
 
-## 🔬 VIII. 基本面扫描器设计哲学 (Pathology Lab Doctrine)
-
-> 本节记录 C5 设计讨论中形成的核心架构共识，具有与 Section III 同等约束力。
+## 🔬 VI. 基本面扫描器设计哲学 (Pathology Lab Doctrine) <a name="-vi-pathology-lab"></a>
+> 本节记录 C5 设计讨论中形成的核心架构共识，具有与 Section VII 同等约束力。
 
 ### 核心隐喻：检验科 vs 法庭
-
 AlphaFlow 是**检验官（Coroner）**，不是**诊断师（Diagnostician）**。
-
 - **AlphaFlow 的职责**：吹哨（Whistleblowing）—— 冷静、中立、极其客观地描述**事实**
 - **LLM 的职责**：断案（Adjudication）—— 基于这些事实作出判断和推断
 
 ### 哲学依据：为什么 AlphaFlow 不能替 LLM 做决策？
-
 1. **先验缺失**：定义一家公司的商业模式需要先验知识（茅台 vs 沃尔玛 vs 银行的 ROE 驱动因子完全不同），这是 LLM 的推理领域，不是单纯数字计算能得到的
 2. **注意力守护**：AlphaFlow 的核心价值在于提供**多维度注意力线索（Attention Cues）**，帮助 LLM 集中注意力，降低因注意力稀释导致的幻觉，而不是越俎代庖
 3. **信息增量原则**：如果一个"信号"只是重复 LLM 已经能自己看到的数字，则该信号没有信息增量，不应输出
 
 ### ⚠️ 扫描器绝对禁令（scanner.py 及所有 Analyzer）
-
 1. **严禁出现定性判断词**：`WARNING` / `DANGER` / `RISK` / `HEALTHY` / `EXCELLENT` / `POOR` / `STRONG` / `WEAK` —— 这些是法庭的语言，不是检验科的语言
 2. **严禁单指标阈值打标**：`ROE > 20% → [WIDE_MOAT]` 这类规则违反了检验科定位。单指标阈值产生的"标签"没有额外信息，LLM 自己能读到 ROE 数值
 3. **必须是跨域组合信号**：每条 Signal 必须至少跨越两个独立财务域（如利润表 × 现金流表），这是跨域组合的最低门槛
 4. **信号为空时必须静默**：若 `signals == []`，则输出层（`llm_view.py`）物理剔除该字段，绝不写入空列表或 `{"signals": []}` 占位。无异常 = 沉默，沉默 = 成本为零
 
 ### 扫描信号的标准格式（信号设计合规模板）
-
 每条合规信号必须包含以下三个且只有三个字段：
-
 ```python
 {
     "id": str,          # 信号唯一标识符，snake_case，描述现象而非评价
@@ -143,7 +147,6 @@ AlphaFlow 是**检验官（Coroner）**，不是**诊断师（Diagnostician）**
     "metrics": {"revenue_yoy_pct": 0.285, "net_margin_delta": -0.032}
 }
 ```
-
 违规示例（禁止）：
 ```python
 # ❌ 包含定性词 "unsustainable"
@@ -153,25 +156,20 @@ AlphaFlow 是**检验官（Coroner）**，不是**诊断师（Diagnostician）**
 ```
 
 ### 指标命名-数值契约（全系统强制）
-
 > **命名即文档。名字是合同，数值是履约。**
-
 1. **`_pct` 后缀** → 值域严格 `< 1`（小数形式，`0.35` = 35%）
 2. **`_margin` / `_rate` / `_ratio` / `_yield` / `ROE` / `ROA`** → 同上，语义上是百分比，值域严格 `< 1`
 3. **`_delta` 后缀** → 两期差值的小数形式（`0.02` = 2 个百分点变化）
 4. **倍数类**（`pe_ttm` / `pb` / `current_ratio` / `equity_multiplier` / `coverage_ratio` / `turnover`）→ 原始倍数，可 `> 1`，命名不含 `_pct`/`_ratio` 语义混淆词
 
 **违规修复先例**：`revenue_yoy_pct` 曾返回 `35.04`（百分比形式），已于 C5 修正为 `0.3504`；`_delta_pp` 命名已全面更名为 `_delta` 以消除单位歧义。任何新增指标**在 PR 被合入前**必须通过以下断言：
-
 ```python
 assert all(abs(v) < 1 for v in pct_metrics.values() if v is not None), \
     "pct/rate/margin/yield metrics must be in decimal form"
 ```
 
 ### 扫描器的行业原型参考
-
 新增 Signal 时必须能对应一个**公认的金融行业分析范式**，例如：
-
 | Signal ID | 行业原型 |
 |-----------|---------|
 | `profit_vs_cashflow` | Sloan (1996) 应计异象 / Beneish M-Score |
@@ -180,3 +178,45 @@ assert all(abs(v) < 1 for v in pct_metrics.values() if v is not None), \
 | `solvency_stress` | Altman Z-Score 精神 / ICR 信贷红线 |
 | `earnings_quality_composition` | IPO 审核核心利润纯度标准 / CFA 盈利质量分析 |
 
+---
+
+### 叁、开发铁律与代码范式 (Red Lines & Elegant Paradigms)
+
+## ⚔️ VII. 不可侵犯的架构禁区 (The Red Lines) <a name="-vii-red-lines"></a>
+1. **数据神圣**：严禁使用 `del`、`pop()` 等操作物理修改 `pack.fundamentals/market_data`。
+2. **致盲计算**：严禁在算子中手写 `dict.get().get()` 扒字典。所有结构化取值必须走 `Facade.resolve_dependency`，所有键名必须使用 `alphaflow.core.keys.Key` 枚举。
+3. **强类型投影**：面向 LLM 的提炼特征必须写入 `pack.distilled_features`。**铁律**：其内部的 Pydantic 模型字段必须声明为 `Optional[...] = None`，以配合视图层的物理蒸发机制。
+4. **捍卫类型链条**：严禁破坏流水线中 `ComponentOutput[ResearchPack]` 的协变泛型推断。
+
+## 🛠️ VIII. 优雅的开发范式 (The Elegant Paradigms) <a name="-viii-elegant-paradigms"></a>
+### 范式 1: 新增声明式结构化指标 (MetricEngine)
+写一个财务比率，只需挂上装饰器并写两行纯数学计算。引擎的反射机制会自动注入依赖、拦截除零异常，并**全自动向黑板宣告 `claim_standard_key`**。
+```python
+from alphaflow.components.processors.engine import MetricEngine
+from alphaflow.core.keys import Key
+
+@MetricEngine.fundamental_metric(
+    feature_name="Inventory_Turnover_TTM",
+    depends_on=[("TTM", "income", Key.income.REV), ("LATEST", "balance", Key.balance.INVENTORIES)]
+)
+def calc_inventory_turnover(rev_ttm: float, inventory: float):
+    # 你的量化才华在这里施展：处理除零，甚至加入库存水位的平滑逻辑
+    return round(rev_ttm / inventory, 4) if inventory != 0 else None
+```
+
+### 范式 2: 新增非结构化事件流分析器 (Event Stream Analyzers)
+定义全部为 Optional 的 Pydantic Schema -> 编写纯函数处理降噪 -> 挂载到 Processor -> 手动向黑板宣告领域隐身。
+```python
+# 在 Processor 的 process() 中调用：
+pack.distilled_features.institution_insights = InstitutionAnalyzer.analyze(pack)
+pack.registry.claim_domain("major_holders") # 铁律：必须显式宣告屏蔽原始长尾列表
+```
+
+---
+
+### 肆、协作规范与演进 (Collaboration & RFC)
+
+## 🚀 IX. 无边界的创新领空 (Innovation Space & RFC) <a name="-ix-innovation-space"></a>
+作为同级别的极客，我赋予你打破常规的权力：
+- **量化深潜**：在 Calculator/Analyzer 内部，请动用你强大的数学与统计学知识。不要局限于四则运算，引入 EWMA、异常值平滑、甚至隐马尔可夫模型，只要你能算出更锐利的 Alpha 信号。
+- **破坏性重构 (The RFC Protocol)**：系统底座（`pipeline.py`, `facade.py`, `engine.py`）属于冻结的基建。但如果你发现它们存在性能瓶颈，或你想用更高级的 AST/元类魔法重写，**严禁直接霸王硬上弓修改**。你必须先向我输出一份简短的 **RFC (架构演进提案)**，说明痛点与收益，获批后方可动刀。

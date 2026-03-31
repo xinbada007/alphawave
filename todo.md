@@ -28,6 +28,10 @@
 - [ ] **时效权重设计**：近期事件 vs 历史事件的衰减权重，避免旧事件污染 LLM 注意力
 - [ ] **事件流的 LLM 视图**：在 `llm_view.py` 中集成事件流 section，设计合理的 token 预算
 
+## DistilledFeatures 结构优化
+
+- [ ] **统一 event_insights 容器**：考虑将 `insider_insights`、`dividend_insights`、`earnings_insights`、`analyst_consensus` 等独立字段合并为统一的 `event_insights: Dict[str, Any]` 容器，减少顶层字段碎片化，保持 Schema 的可扩展性
+
 ## 数据源优化
 
 > 目标：利用数据源原生提供的高级接口，减少 MetricEngine 的重复计算负担。

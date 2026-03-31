@@ -54,18 +54,19 @@ def build_llm_view(pack: ResearchPack) -> str:
     unclaimed_funds = {}
     consumed_keys = pack.registry.consumed_standard_keys
 
-    # 1. 动态过滤 Fundamentals 域
+    # 1. 动态过滤 Fundamentals 域（三步管线，类型无关）
     for category, data_node in (pack.fundamentals or {}).items():
+        # Step 1: 域级守卫 — 类型无关，统一拦截
+        if category in pack.registry.consumed_domains:
+            continue
+
+        # Step 2: 字段级净化 — 仅 dict 节点深度过滤
         if isinstance(data_node, dict):
-            # 剔除已被 MetricEngine 消费的原子指标
-            filtered = {k: v for k, v in data_node.items() if k not in consumed_keys}
-            if filtered:
-                unclaimed_funds[category] = filtered
-        elif isinstance(data_node, list):
-            # 剔除已被整体屏蔽的领域 (如 insider_trading_history)
-            if category not in pack.registry.consumed_domains:
-                # 信任 Collector 的原始数据长度，不越权截断
-                unclaimed_funds[category] = data_node
+            data_node = {k: v for k, v in data_node.items() if k not in consumed_keys}
+
+        # Step 3: 空值守卫 — 蒸发后如果为空则丢弃
+        if not _is_empty(data_node):
+            unclaimed_funds[category] = data_node
 
     # 2. 动态过滤 Market Metrics 域
     clean_market_metrics = {}

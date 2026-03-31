@@ -8,6 +8,7 @@ from alphaflow.components.processors.fundamentals.scanner import scan_fundamenta
 from alphaflow.components.processors.fundamentals.dividend import DividendAnalyzer
 from alphaflow.components.processors.fundamentals.earnings import EarningsAnalyzer
 from alphaflow.components.processors.fundamentals.evaluators import EvaluatorEngine
+from alphaflow.components.processors.fundamentals.consensus import ConsensusAnalyzer
 
 # 触发全量声明式指标注册（6个域模块）
 import alphaflow.components.processors.metrics  # noqa: F401
@@ -55,7 +56,8 @@ class FundamentalProcessor(BaseProcessor):
         # 6. 财报超预期分析
         pack.distilled_features.earnings_insights = EarningsAnalyzer.analyze(pack)
 
-        # 7. 向黑板宣告：隐匿原始脏时序
+        # 7. 分析师共识
+        pack.distilled_features.analyst_consensus = ConsensusAnalyzer.analyze(pack)
         from alphaflow.core.context import GlobalContext
         is_debug = GlobalContext().get("DEBUG", False)
         
@@ -65,6 +67,7 @@ class FundamentalProcessor(BaseProcessor):
             pack.registry.claim_domain("earnings_calendar")
             pack.registry.claim_domain("management_history")
             pack.registry.claim_domain("splits_history")
+            pack.registry.claim_domain("estimates")
 
         return ComponentOutput(success=True, payload=pack)
 
