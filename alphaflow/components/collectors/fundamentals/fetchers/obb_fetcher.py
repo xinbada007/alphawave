@@ -19,6 +19,13 @@ from alphaflow.core.acl.transformers import _tx_filter_insider_trading
 # 全局绕过 Mypy 检查
 obb_any: Any = obb
 
+# Yahoo Finance 服务端硬上限：fundamentals-timeseries 端点对季度三表(income/balance/cash)
+# 最多返回约 5 个季度，OpenBB 在 openbb-yfinance>=1.3.6 (PR #6962, 2024-11-25) 用 Pydantic
+# le=5 强约束。任何 limit > 5 都会触发 ValidationError。
+# 影响：US 标的的 growth_ttm / trend_delta_ttm 域无法计算 YoY/Delta (需 8 季)，
+# fail-loud — MetricEngine 会 skip 并打印警告，不会写出错误数值。
+_YFINANCE_FINANCIALS_MAX_LIMIT = 5
+
 
 class OBBFetcher(BaseFetcher):
     """纯 OpenBB 抓取器 - 只管 OpenBB，无 fallback"""
@@ -104,6 +111,8 @@ class OBBFetcher(BaseFetcher):
                 stmt_key = parts[1]
                 period = "annual" if "a_" in task_name else "quarter"
                 limit = limit_a if period == "annual" else limit_q
+                if self.default_provider == "yfinance":
+                    limit = min(limit, _YFINANCE_FINANCIALS_MAX_LIMIT)
 
                 if hasattr(obb_any.equity.fundamental, stmt_key):
                     func = getattr(obb_any.equity.fundamental, stmt_key)
