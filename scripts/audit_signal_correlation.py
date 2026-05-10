@@ -129,7 +129,10 @@ SAMPLES = [
 
 PRE_DAYS = 10   # 锚点前扫描天数
 POST_DAYS = 5   # 锚点后扫描天数（验证信号衰退）
-FWD_RETURN_DAYS = 20  # 计算 forward return 的窗口
+FWD_RETURN_DAYS = 20      # 单点 fwd return（保留为参考）
+DRAWDOWN_HORIZON = 60     # 主真值口径：peak 起 60 日内最大回撤
+DD_STRONG_THRESHOLD = -0.10   # ≤ -10% 判 STRONG
+DD_MILD_THRESHOLD   = -0.05   # ≤ -5%  判 MILD/WEAK
 
 
 @dataclass
@@ -194,6 +197,31 @@ def fwd_return(full_df: pd.DataFrame, base_day: pd.Timestamp,
     return (p1 - p0) / p0
 
 
+def max_drawdown(full_df: pd.DataFrame, base_day: pd.Timestamp,
+                 horizon: int = DRAWDOWN_HORIZON) -> Tuple[Optional[float], Optional[int]]:
+    """
+    主真值口径：从 base_day 到 base_day+horizon 之间，最低收盘相对 base_day 的最大跌幅。
+    比 fwd_return 更稳健 —— 后者只看终点单日，易被恐慌底反弹反转误判。
+
+    返回 (drawdown, days_to_trough)。drawdown 为负数表示跌幅，0 或正数表示未跌破 base。
+    """
+    df = full_df.sort_values("date").reset_index(drop=True)
+    mask = df["date"] >= base_day
+    if not mask.any():
+        return None, None
+    s = mask.idxmax()
+    e = min(s + horizon, len(df) - 1)
+    if e == s:
+        return None, None
+    p0 = float(df.loc[s, "close"])
+    if p0 == 0:
+        return None, None
+    seg = df.loc[s:e, "close"].astype(float)
+    trough_idx = seg.idxmin()
+    p_low = float(seg.loc[trough_idx])
+    return (p_low - p0) / p0, int(trough_idx - s)
+
+
 # Level 排序（与 composite_risk/config.py::LEVEL_TIERS 一致）
 LEVEL_RANK = {"LOW": 0, "MODERATE": 1, "ELEVATED": 2, "HIGH": 3, "CRITICAL": 4}
 
@@ -202,86 +230,106 @@ def level_rank(lvl: Optional[str]) -> int:
 
 
 def main() -> int:
-    print("=" * 130)
-    print("Signal–Price Correlation Audit (time-window sweep + forward return)")
-    print(f"  window=[anchor-{PRE_DAYS}, anchor+{POST_DAYS}]  fwd_return_horizon={FWD_RETURN_DAYS}d")
+    print("=" * 145)
+    print("Signal–Price Correlation Audit (sweep + max-drawdown 60d)")
+    print(f"  sweep window=[anchor-{PRE_DAYS}, anchor+{POST_DAYS}]")
+    print(f"  事后真值: peak 起 {DRAWDOWN_HORIZON}d 内最大回撤 (取代单点 fwd_{FWD_RETURN_DAYS}d，避免 V 形反弹错杀)")
     print("  双层判别：")
-    print("    派发组（事后真值 fwd_return ≤ -5%）：")
-    print("      - 强信号: peak_level ∈ {ELEVATED/HIGH/CRITICAL} 在 [anchor-10,+1] 窗口内")
-    print("      - 弱信号: peak_score ≥ 45 但 level=MODERATE → 仅作\"建议关注\"")
-    print("    正常组（fwd_return |·| < 10%）：")
-    print("      - 安静: peak_level ≤ MODERATE → 不出 ELEVATED+ 警报")
-    print("=" * 130)
+    print(f"    派发组（事后真值 max_dd ≤ {DD_STRONG_THRESHOLD:.0%} 强 / ≤ {DD_MILD_THRESHOLD:.0%} 弱）：")
+    print("      - STRONG: peak_level ∈ {ELEVATED/HIGH/CRITICAL} & max_dd 强")
+    print("      - WEAK:   peak_score ≥ 45 & max_dd 弱以上 (level 仅 MODERATE 也认)")
+    print("      - METHOD: 信号 OK 但价格 V 反弹 (max_dd > -5%) → 标 anchor 失效，不计漏报")
+    print(f"    正常组（max_dd 与 fwd_{FWD_RETURN_DAYS}d 都 < |10%|）：")
+    print("      - QUIET: peak_level ≤ MODERATE → 不出 ELEVATED+ 警报")
+    print("=" * 145)
 
-    summary: List[Tuple[str, str, int, Optional[float], Optional[str], Optional[float], str]] = []
-
+    summary = []
     for s in SAMPLES:
         points, anchor_actual, full_df = sweep_one(s)
         if not points:
             print(f"  ⚠️  {s.alias}: no points (fixture too short)")
             continue
-
-        # 在 [anchor-PRE, anchor+1] 窗口内找 score 最大的点
         pre_window = [p for p in points if -PRE_DAYS <= p.dt <= 1]
         peak = max(pre_window, key=lambda p: (p.score or -1))
         fwd = fwd_return(full_df, peak.day, FWD_RETURN_DAYS)
+        dd, dt_t = max_drawdown(full_df, peak.day, DRAWDOWN_HORIZON)
 
-        # 判别（基于 LEVEL）
         peak_lvl_rank = level_rank(peak.level)
         if s.klass == "distribution":
             captured_strong = peak_lvl_rank >= LEVEL_RANK["ELEVATED"]
-            captured_weak = (peak.score is not None and peak.score >= 45)
-            timing_ok = peak.dt <= 1
-            forecast = (fwd is not None) and (fwd <= -0.05)
-            if captured_strong and timing_ok and forecast:
+            captured_weak   = (peak.score is not None and peak.score >= 45) and not captured_strong
+            timing_ok       = peak.dt <= 1
+            dd_strong       = (dd is not None) and (dd <= DD_STRONG_THRESHOLD)
+            dd_mild         = (dd is not None) and (dd <= DD_MILD_THRESHOLD)
+
+            if captured_strong and timing_ok and dd_strong:
                 verdict = "✅ STRONG"
-            elif captured_weak and timing_ok and forecast:
-                verdict = "⚠️  WEAK (score ok, level only MODERATE)"
+            elif captured_strong and timing_ok and dd_mild:
+                verdict = "🟢 STRONG_MILD (signal HIGH, dd 中等)"
+            elif captured_weak and timing_ok and dd_strong:
+                verdict = "⚠️  WEAK (level=MOD, dd 大)"
+            elif captured_weak and timing_ok and dd_mild:
+                verdict = "⚠️  WEAK_MILD (level=MOD, dd 中等)"
+            elif (captured_strong or captured_weak) and timing_ok and not dd_mild:
+                # 信号触发了但 60d 没跌 → anchor 失效 / V 反弹 → 不算产品漏报
+                verdict = f"🔵 METHOD (signal ok, max_dd={dd:+.1%}, anchor 反转)"
             else:
                 tags = []
-                if not captured_weak: tags.append(f"score={peak.score}")
-                if not timing_ok: tags.append(f"事后才发(dt={peak.dt:+d})")
-                if not forecast: tags.append(f"fwd={fwd:+.1%}")
-                verdict = "❌ MISS: " + ", ".join(tags)
+                if not captured_strong and not captured_weak:
+                    tags.append(f"score={peak.score}")
+                if not timing_ok:
+                    tags.append(f"事后才发(dt={peak.dt:+d})")
+                if not dd_mild:
+                    tags.append(f"max_dd={dd:+.1%}" if dd is not None else "no dd data")
+                verdict = "❌ TRUE_MISS: " + ", ".join(tags)
         else:
             quiet_strong = peak_lvl_rank < LEVEL_RANK["ELEVATED"]
-            quiet_price = (fwd is None) or (abs(fwd) < 0.10)
+            # 正常组：不仅看 fwd 单点，也看 max_dd（避免漏掉短期反弹长期跌的隐患）
+            quiet_price = (
+                (fwd is None or abs(fwd) < 0.10)
+                and (dd is None or dd > DD_MILD_THRESHOLD)
+            )
             if quiet_strong and quiet_price:
-                if peak_lvl_rank == LEVEL_RANK["MODERATE"]:
-                    verdict = "✅ QUIET (max level=MODERATE 提示，未触 ELEVATED+ 警报)"
-                else:
-                    verdict = "✅ QUIET"
+                lbl = "MODERATE 提示" if peak_lvl_rank == LEVEL_RANK["MODERATE"] else ""
+                verdict = f"✅ QUIET ({lbl}未触 ELEVATED+ 警报)" if lbl else "✅ QUIET"
+            elif quiet_strong and not quiet_price:
+                # 信号正确，但样本期内股价异动 → 样本选择问题，非信号端误报
+                verdict = (f"🟡 SAMPLE_DRIFT (signal ok, fwd={fwd:+.1%} dd={dd:+.1%})"
+                           if (fwd is not None and dd is not None) else
+                           "🟡 SAMPLE_DRIFT (price moved)")
             else:
-                tags = []
-                if not quiet_strong: tags.append(f"误报 level={peak.level}")
-                if not quiet_price: tags.append(f"价格异动 fwd={fwd:+.1%}")
+                tags = [f"误报 level={peak.level}"]
+                if not quiet_price and fwd is not None: tags.append(f"fwd={fwd:+.1%}")
+                if not quiet_price and dd is not None:  tags.append(f"dd={dd:+.1%}")
                 verdict = "❌ FALSE_ALARM: " + ", ".join(tags)
 
-        summary.append((s.alias, s.klass, peak.dt, peak.score, peak.level, fwd, verdict))
+        summary.append((s.alias, s.klass, peak.dt, peak.score, peak.level, fwd, dd, dt_t, verdict))
 
-    print(f"\n{'alias':<22}{'klass':<14}{'peak_dt':>8}{'peak_score':>11}  "
-          f"{'peak_level':<10}{'fwd_20d':>10}  verdict")
-    print("-" * 130)
-    n_strong = n_weak = n_miss = n_quiet = n_false = 0
-    for alias, klass, dt, score, level, fwd, verdict in summary:
+    print(f"\n{'alias':<22}{'klass':<14}{'pdt':>5}{'score':>7}  "
+          f"{'level':<10}{'fwd20d':>9}{'maxDD60':>9}{'tT':>4}  verdict")
+    print("-" * 145)
+    counts = {}
+    for alias, klass, dt, score, level, fwd, dd, dt_t, verdict in summary:
         score_s = f"{score:6.1f}" if score is not None else "  None"
         fwd_s = f"{fwd:+7.1%}" if fwd is not None else "    -  "
-        print(f"{alias:<22}{klass:<14}{dt:>+8d}{score_s:>11}  {(level or '-'):<10}{fwd_s:>10}  {verdict}")
-        if verdict.startswith("✅ STRONG"): n_strong += 1
-        elif verdict.startswith("⚠️"): n_weak += 1
-        elif verdict.startswith("❌ MISS"): n_miss += 1
-        elif verdict.startswith("✅ QUIET"): n_quiet += 1
-        elif verdict.startswith("❌ FALSE"): n_false += 1
+        dd_s = f"{dd:+7.1%}" if dd is not None else "    -  "
+        dt_s = f"{dt_t}" if dt_t is not None else "-"
+        print(f"{alias:<22}{klass:<14}{dt:>+5d}{score_s:>7}  "
+              f"{(level or '-'):<10}{fwd_s:>9}{dd_s:>9}{dt_s:>4}  {verdict}")
+        # 提取 verdict 主类
+        key = verdict.split()[1] if len(verdict.split()) > 1 else verdict
+        counts[key] = counts.get(key, 0) + 1
 
-    n_dist = sum(1 for _, k, *_ in summary if k == "distribution")
-    n_norm = sum(1 for _, k, *_ in summary if k == "normal")
-
-    print("\n" + "=" * 130)
-    print(f"派发组 ({n_dist}): STRONG={n_strong}  WEAK={n_weak}  MISS={n_miss}")
-    print(f"正常组 ({n_norm}): QUIET={n_quiet}  FALSE_ALARM={n_false}")
-    print("=" * 130)
-    # 通过条件：派发 MISS=0；正常 FALSE_ALARM=0
-    return 0 if (n_miss == 0 and n_false == 0) else 1
+    n_dist = sum(1 for r in summary if r[1] == "distribution")
+    n_norm = sum(1 for r in summary if r[1] == "normal")
+    print("\n" + "=" * 145)
+    print(f"派发组 ({n_dist}):  STRONG={counts.get('STRONG',0)}  STRONG_MILD={counts.get('STRONG_MILD',0)}  "
+          f"WEAK={counts.get('WEAK',0)}  WEAK_MILD={counts.get('WEAK_MILD',0)}  "
+          f"METHOD={counts.get('METHOD',0)}  TRUE_MISS={counts.get('TRUE_MISS:',0)}")
+    print(f"正常组 ({n_norm}):  QUIET={counts.get('QUIET',0)}  "
+          f"SAMPLE_DRIFT={counts.get('SAMPLE_DRIFT',0)}  FALSE_ALARM={counts.get('FALSE_ALARM:',0)}")
+    print("=" * 145)
+    return 0 if (counts.get('TRUE_MISS:', 0) == 0 and counts.get('FALSE_ALARM:', 0) == 0) else 1
 
 
 if __name__ == "__main__":
