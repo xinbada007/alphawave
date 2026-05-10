@@ -48,9 +48,23 @@ from .config import (
     CLV_WEAK_TREND_PCT_THRESHOLD,
     CLV_WINDOWS,
     MIN_DAYS_FOR_PATTERN,
+    PATH_DOWN_UP_VOLUME_RATIO_THRESHOLD,
+    PATH_DOWN_VOLUME_SHARE_THRESHOLD,
+    PATH_DRAWDOWN_20D_THRESHOLD,
+    PATH_DRAWDOWN_60D_THRESHOLD,
+    PATH_FAILED_RECOVERY_DD_THRESHOLD,
+    PATH_FAILED_RECOVERY_RATIO_MAX,
+    PATH_NEG_DAY_RATIO_THRESHOLD,
+    PATH_PRESSURE_WINDOWS,
     TAG_AMIHUD_LATEST,
     TAG_CLV_LATEST,
     TAG_CLV_WEAK_TREND_20D,
+    TAG_CHRONIC_DISTRIBUTION_60D,
+    TAG_DOWN_DAY_VOLUME_60D,
+    TAG_FAILED_RECOVERY_60D,
+    TAG_PATH_DRAWDOWN_20D,
+    TAG_PATH_DRAWDOWN_60D,
+    TAG_PATH_PERSISTENT_DOWN_60D,
     TAG_VWAP_BELOW_TREND_20D,
     TAG_VWAP_LATEST,
     VWAP_BELOW_TREND_PCT_THRESHOLD,
@@ -72,6 +86,7 @@ class DistributionPatternProfiler:
         self.clv_windows = tuple(self.config.get("clv_windows", CLV_WINDOWS))
         self.vwap_windows = tuple(self.config.get("vwap_dev_windows", VWAP_DEV_WINDOWS))
         self.amihud_windows = tuple(self.config.get("amihud_windows", AMIHUD_WINDOWS))
+        self.path_windows = tuple(self.config.get("path_pressure_windows", PATH_PRESSURE_WINDOWS))
         self.amihud_baseline = int(self.config.get("amihud_baseline", AMIHUD_BASELINE_WINDOW))
 
     # =====================================================================
@@ -143,6 +158,14 @@ class DistributionPatternProfiler:
             pressure.extend(am_pressure)
             neutral.extend(am_neutral)
 
+        # ---- Path Pressure（只使用历史 OHLCV；无事件层、无未来数据）
+        path_block, path_pressure, path_neutral = self._build_path_pressure(df_sorted)
+        if path_block:
+            result["path_pressure"] = path_block
+            fields.append("path_pressure")
+            pressure.extend(path_pressure)
+            neutral.extend(path_neutral)
+
         dq["fields_available"] = fields
         result["data_quality"] = dq
         result["summary"] = {
@@ -204,6 +227,67 @@ class DistributionPatternProfiler:
         pct_neg = block["rolling"]["20d_pct_negative"]
         if pct_neg is not None and pct_neg >= CLV_WEAK_TREND_PCT_THRESHOLD:
             pressure.append(TAG_CLV_WEAK_TREND_20D)
+
+        return block, pressure, neutral
+
+    # ---- Path Pressure block
+    def _build_path_pressure(self, df: pd.DataFrame):
+        block = metrics.compute_path_pressure_block(df, self.path_windows)
+        pressure: List[str] = []
+        neutral: List[str] = []
+        if not block:
+            return {}, pressure, neutral
+
+        b20 = block.get("20d") or {}
+        b60 = block.get("60d") or {}
+
+        dd20 = b20.get("drawdown_from_peak")
+        if dd20 is not None and dd20 <= PATH_DRAWDOWN_20D_THRESHOLD:
+            pressure.append(TAG_PATH_DRAWDOWN_20D)
+
+        dd60 = b60.get("drawdown_from_peak")
+        max_dd60 = b60.get("max_drawdown")
+        neg60 = b60.get("neg_day_ratio")
+        down_share60 = b60.get("down_volume_share")
+        down_up60 = b60.get("down_up_volume_ratio")
+        recovery60 = b60.get("recovery_ratio")
+
+        persistent_down = bool(neg60 is not None and neg60 >= PATH_NEG_DAY_RATIO_THRESHOLD)
+        down_volume = bool(
+            (down_share60 is not None and down_share60 >= PATH_DOWN_VOLUME_SHARE_THRESHOLD)
+            or (down_up60 is not None and down_up60 >= PATH_DOWN_UP_VOLUME_RATIO_THRESHOLD)
+        )
+
+        failed_recovery = bool(
+            max_dd60 is not None
+            and max_dd60 <= PATH_FAILED_RECOVERY_DD_THRESHOLD
+            and recovery60 is not None
+            and recovery60 <= PATH_FAILED_RECOVERY_RATIO_MAX
+        )
+
+        # 原子条件只作为 evidence 留在 path_pressure block 中；summary.pressure 只发
+        # 组合信号，避免把普通市场下跌/短期波动误计为派发风险。
+        if dd20 is not None and dd20 <= -0.10 and down_volume:
+            pressure.append(TAG_PATH_DRAWDOWN_20D)
+
+        if dd60 is not None and dd60 <= -0.18 and down_volume:
+            pressure.append(TAG_PATH_DRAWDOWN_60D)
+
+        if (
+            dd60 is not None
+            and dd60 <= -0.08
+            and persistent_down
+            and down_volume
+        ):
+            pressure.append(TAG_CHRONIC_DISTRIBUTION_60D)
+            pressure.append(TAG_PATH_PERSISTENT_DOWN_60D)
+            pressure.append(TAG_DOWN_DAY_VOLUME_60D)
+
+        if failed_recovery and (persistent_down or down_volume):
+            pressure.append(TAG_FAILED_RECOVERY_60D)
+
+        if not pressure:
+            neutral.append("[PATH_PRESSURE_NEUTRAL]")
 
         return block, pressure, neutral
 

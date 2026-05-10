@@ -57,6 +57,11 @@ from alphaflow.components.processors.techniques.analyzers.distribution_pattern.c
     DV_SOURCE_NATIVE,
     DV_SOURCE_SYNTHETIC,
     MIN_DAYS_FOR_PATTERN,
+    TAG_CHRONIC_DISTRIBUTION_60D,
+    TAG_DOWN_DAY_VOLUME_60D,
+    TAG_FAILED_RECOVERY_60D,
+    TAG_PATH_DRAWDOWN_60D,
+    TAG_PATH_PERSISTENT_DOWN_60D,
     VWAP_DEV_TIERS,
     VWAP_SOURCE_AMT_VOL,
     VWAP_SOURCE_NATIVE,
@@ -108,6 +113,34 @@ def _make_ohlc(n=250, *, weak_close=False, with_amount=True, with_vwap=False, se
         df["amount"] = (volume * close).round(2)
     if with_vwap:
         df["vwap"] = (high + low + close) / 3
+    return df
+
+
+def _make_chronic_distribution(n=250):
+    """构造客观市场行为：60D 慢性下跌 + 下跌日放量 + 反弹失败。"""
+    dates = pd.date_range("2024-01-02", periods=n, freq="B").strftime("%Y-%m-%d")
+    close = np.full(n, 100.0)
+    # 前 190 天平稳，后 60 天缓慢下跌至 -18%
+    close[-60:] = np.linspace(100.0, 82.0, 60)
+    # 让每隔 5 天小反弹，避免单调路径过于人工
+    for i in range(n - 55, n, 5):
+        close[i] += 1.2
+    high = close * 1.01
+    low = close * 0.99
+    open_ = close * 1.003
+    volume = np.full(n, 1_000_000.0)
+    ret = pd.Series(close).pct_change()
+    volume[ret < 0] = 1_400_000.0
+    volume[ret > 0] = 800_000.0
+    df = pd.DataFrame({
+        "date": dates,
+        "open": open_,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+    })
+    df["amount"] = df["close"] * df["volume"]
     return df
 
 
@@ -236,7 +269,9 @@ def p02():
     assert dq["dollar_volume_source"] == DV_SOURCE_NATIVE, dq
     assert dq["market_type"] == "hk"
     assert "clv" in out and "vwap_deviation" in out and "amihud_illiquidity" in out
-    assert set(dq["fields_available"]) == {"clv", "vwap_deviation", "amihud_illiquidity"}
+    assert set(dq["fields_available"]) == {
+        "clv", "vwap_deviation", "amihud_illiquidity", "path_pressure",
+    }
 
 
 @_case("P03 US 端到端 → vwap_source=typical_price_fallback, dv=close_volume_synthetic")
@@ -266,6 +301,22 @@ def p05():
     # 严格 JSON 序列化
     s = json.dumps(out, allow_nan=False)
     assert "Infinity" not in s and "NaN" not in s
+
+
+@_case("P06 path_pressure 慢性派发 → 路径/下跌日放量/反弹失败标签")
+def p06():
+    df = _make_chronic_distribution()
+    out = DistributionPatternProfiler().analyze(df, market_type=MarketType.US)
+    assert "path_pressure" in out, out.keys()
+    pressure = out["summary"]["pressure_signals"]
+    assert TAG_PATH_DRAWDOWN_60D in pressure, pressure
+    assert TAG_PATH_PERSISTENT_DOWN_60D in pressure, pressure
+    assert TAG_DOWN_DAY_VOLUME_60D in pressure, pressure
+    assert TAG_FAILED_RECOVERY_60D in pressure, pressure
+    assert TAG_CHRONIC_DISTRIBUTION_60D in pressure, pressure
+    path60 = out["path_pressure"]["60d"]
+    assert path60["drawdown_from_peak"] <= -0.12, path60
+    assert path60["down_volume_share"] >= 0.55, path60
 
 
 # ============================================================ Entry

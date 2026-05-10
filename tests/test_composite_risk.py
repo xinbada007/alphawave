@@ -69,6 +69,13 @@ def mk_dist(n_pressure=2, sufficient=True):
     }
 
 
+def mk_dist_tags(tags, sufficient=True):
+    return {
+        "data_quality": {"sufficient_for_profile": sufficient},
+        "summary": {"pressure_signals": list(tags)},
+    }
+
+
 def mk_rel(rv="ELEVATED", rr="INLINE", index_anom=False, sufficient=True):
     return {
         "data_quality": {"sufficient_for_profile": sufficient},
@@ -77,6 +84,19 @@ def mk_rel(rv="ELEVATED", rr="INLINE", index_anom=False, sufficient=True):
             "rel_return_tier": rr,
             "index_anomalous": index_anom,
         },
+        "summary": {"pressure_signals": []},
+    }
+
+
+def mk_rel_tags(tags, sufficient=True):
+    return {
+        "data_quality": {"sufficient_for_profile": sufficient},
+        "latest_day": {
+            "rel_volume_tier": "NORMAL",
+            "rel_return_tier": "INLINE",
+            "index_anomalous": False,
+        },
+        "summary": {"pressure_signals": list(tags)},
     }
 
 
@@ -367,6 +387,24 @@ def c05():
     assert out["data_quality"]["sufficient_for_score"] is True
     assert "distribution_pattern" in out["data_quality"]["missing_components"]
     assert out["data_quality"]["core_quorum"] == "2/3"
+
+
+@_case("C06 objective path + market confirmation → +8 bounded bonus")
+def c06():
+    base = CompositeRiskScorer().score(
+        volume_anomaly=mk_vol("NORMAL"),
+        distribution_pattern=mk_dist_tags(["[CHRONIC_DISTRIBUTION_60D]"]),
+        market_relative=mk_rel_tags(["[UNDERPERFORM_INDEX_60PCT_20D]"]),
+    )
+    no_market = CompositeRiskScorer().score(
+        volume_anomaly=mk_vol("NORMAL"),
+        distribution_pattern=mk_dist_tags(["[CHRONIC_DISTRIBUTION_60D]"]),
+        market_relative=mk_rel_tags([]),
+    )
+    adj = base["data_quality"]["score_adjustments"]["objective_path_confirmation"]
+    assert adj["bonus"] == cfg.OBJECTIVE_PATH_CONFIRMATION_BONUS, adj
+    assert cfg.TAG_OBJECTIVE_PATH_CONFIRMATION in base["data_quality"]["diagnostic_tags"]
+    assert math.isclose(base["score"] - no_market["score"], cfg.OBJECTIVE_PATH_CONFIRMATION_BONUS)
 
 
 # ============================================================

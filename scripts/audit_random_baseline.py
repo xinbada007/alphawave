@@ -36,8 +36,9 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from scripts.proxy_truth import evaluate as proxy_evaluate  # noqa: E402
+from alphaflow.core.schema import DataFrameModel, ResearchPack  # noqa: E402
+from alphaflow.components.processors.techniques.registry import TechnicalAnalyzerRegistry  # noqa: E402
 from tests.test_golden_samples import (  # noqa: E402
-    run_analyzers,
     extract_score,
     extract_level,
     primary_latest_tier,
@@ -117,6 +118,27 @@ def load_benchmark(market: str) -> pd.DataFrame:
     return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
 
 
+def run_analyzers_with_benchmark(
+    symbol: str,
+    stock_df: pd.DataFrame,
+    benchmark_df: pd.DataFrame,
+    market: str,
+) -> Dict[str, Any]:
+    """Run product analyzers with benchmark history truncated to the same anchor."""
+    pack = ResearchPack(
+        symbol=symbol,
+        market_data=DataFrameModel.from_df(stock_df),
+        market_data_meta={"source": "random_baseline_fixture", "rows": len(stock_df)},
+        benchmark_data=DataFrameModel.from_df(benchmark_df),
+        benchmark_meta={
+            "status": "ok",
+            "benchmark_symbol": {"US": "SPY", "HK": "^HSI", "CN": "000300.SS"}[market],
+            "source": "random_baseline_benchmark_fixture",
+        },
+    )
+    return TechnicalAnalyzerRegistry.run_all(stock_df, pack, config={})
+
+
 def actual_anchor(df: pd.DataFrame, anchor: str) -> Optional[pd.Timestamp]:
     requested = pd.Timestamp(anchor)
     mask = df["date"] <= requested
@@ -180,7 +202,8 @@ def evaluate_one(row: Dict[str, str], benchmarks: Dict[str, pd.DataFrame]) -> Au
         )
 
     try:
-        profile = run_analyzers(ticker, hist)
+        bench_hist = benchmarks[market][benchmarks[market]["date"] <= anchor].reset_index(drop=True)
+        profile = run_analyzers_with_benchmark(ticker, hist, bench_hist, market)
         score = safe_float(extract_score(profile))
         level = extract_level(profile)
         tier = primary_latest_tier(profile)

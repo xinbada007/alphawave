@@ -20,6 +20,7 @@ from .config import (
     CLV_TIERS,
     DV_SOURCE_NATIVE,
     DV_SOURCE_SYNTHETIC,
+    PATH_PRESSURE_WINDOWS,
     VWAP_DEV_TIERS,
     VWAP_NATIVE_NONNULL_THRESHOLD,
     VWAP_SOURCE_AMT_VOL,
@@ -216,7 +217,96 @@ def classify_amihud_zscore(value: Optional[float]) -> str:
 
 
 # =========================================================================
-# 4. 滚动统计
+# 4. Path Pressure（过去路径压力）
+# =========================================================================
+def compute_path_pressure_block(
+    df: pd.DataFrame,
+    windows: Tuple[int, ...] = PATH_PRESSURE_WINDOWS,
+) -> Dict[str, Any]:
+    """
+    基于过去窗口的客观市场行为计算路径压力。
+
+    只使用 OHLCV / amount，不使用任何事件层或未来数据。
+    返回每个窗口的：
+      - return: 窗口起点到最新收盘收益
+      - drawdown_from_peak: 最新收盘相对窗口内最高收盘回撤
+      - max_drawdown: 窗口内 running-peak 最大回撤
+      - neg_day_ratio: 下跌日占比
+      - down_volume_share: 下跌日成交量 / 全窗口成交量
+      - down_up_volume_ratio: 下跌日均量 / 上涨日均量
+      - days_since_peak/trough
+      - recovery_ratio: 从 trough 到 latest 的恢复幅度 / |peak-to-trough|
+    """
+    if df is None or len(df) == 0 or "close" not in df.columns:
+        return {}
+
+    close = pd.to_numeric(df["close"], errors="coerce").astype("float64")
+    if "volume" in df.columns:
+        volume = pd.to_numeric(df["volume"], errors="coerce").astype("float64")
+    else:
+        volume = pd.Series([np.nan] * len(df), index=df.index, dtype="float64")
+
+    out: Dict[str, Any] = {}
+    for window in windows:
+        if len(close.dropna()) < max(5, min(window, len(close))):
+            continue
+
+        c = close.tail(window).reset_index(drop=True)
+        v = volume.tail(window).reset_index(drop=True)
+        valid = c.dropna()
+        if len(valid) < 5:
+            continue
+
+        latest = float(valid.iloc[-1])
+        first = float(valid.iloc[0])
+        peak_idx = int(valid.idxmax())
+        trough_idx = int(valid.idxmin())
+        peak = float(valid.loc[peak_idx])
+        trough = float(valid.loc[trough_idx])
+
+        window_return = (latest - first) / first if first > 0 else np.nan
+        drawdown_from_peak = (latest - peak) / peak if peak > 0 else np.nan
+
+        running_peak = valid.cummax()
+        dd_series = (valid - running_peak) / running_peak.replace(0, np.nan)
+        max_dd = float(dd_series.min()) if dd_series.notna().any() else np.nan
+
+        ret = valid.pct_change()
+        neg_mask = ret < 0
+        neg_ratio = float(neg_mask.sum() / ret.dropna().shape[0]) if ret.dropna().shape[0] else np.nan
+
+        v_aligned = v.reindex(valid.index)
+        total_vol = float(v_aligned.sum(skipna=True)) if v_aligned.notna().any() else np.nan
+        down_vol = float(v_aligned[neg_mask].sum(skipna=True)) if v_aligned.notna().any() else np.nan
+        down_volume_share = down_vol / total_vol if total_vol and total_vol > 0 else np.nan
+
+        down_avg = float(v_aligned[neg_mask].mean(skipna=True)) if v_aligned[neg_mask].notna().any() else np.nan
+        up_avg = float(v_aligned[ret > 0].mean(skipna=True)) if v_aligned[ret > 0].notna().any() else np.nan
+        down_up_volume_ratio = down_avg / up_avg if up_avg and up_avg > 0 else np.nan
+
+        # recovery_ratio 只在 peak 先于 trough 时有派发路径语义；否则记 1（已恢复/非典型）
+        if peak_idx < trough_idx and peak > trough:
+            recovery_ratio = (latest - trough) / (peak - trough)
+        else:
+            recovery_ratio = 1.0
+
+        out[f"{window}d"] = {
+            "return": _safe_round(window_return, 4),
+            "drawdown_from_peak": _safe_round(drawdown_from_peak, 4),
+            "max_drawdown": _safe_round(max_dd, 4),
+            "neg_day_ratio": _safe_round(neg_ratio, 4),
+            "down_volume_share": _safe_round(down_volume_share, 4),
+            "down_up_volume_ratio": _safe_round(down_up_volume_ratio, 4),
+            "days_since_peak": int(len(valid) - 1 - peak_idx),
+            "days_since_trough": int(len(valid) - 1 - trough_idx),
+            "recovery_ratio": _safe_round(recovery_ratio, 4),
+        }
+
+    return out
+
+
+# =========================================================================
+# 5. 滚动统计
 # =========================================================================
 def rolling_avg(series: pd.Series, window: int) -> Optional[float]:
     """series 尾部 window 个有效值的平均。"""
@@ -237,7 +327,7 @@ def rolling_pct_below(
 
 
 # =========================================================================
-# 5. 数据质量评估
+# 6. 数据质量评估
 # =========================================================================
 def assess_data_quality(df: pd.DataFrame) -> Dict[str, Any]:
     """基础信息（vwap_source / dv_source 由 profiler 在 resolve_*_series 后填）。"""

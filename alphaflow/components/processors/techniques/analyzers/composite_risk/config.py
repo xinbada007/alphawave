@@ -178,3 +178,23 @@ TAG_INSUFFICIENT_QUORUM    = "[COMPOSITE_RISK_LOW_QUORUM]"
 TAG_LOW_CONFIDENCE         = "[COMPOSITE_RISK_LOW_CONFIDENCE]"
 TAG_ADVISORY_ONLY          = "[COMPOSITE_RISK_ADVISORY_ONLY]"
 TAG_NO_PERSISTENCE         = "[COMPOSITE_RISK_NO_PERSISTENCE]"
+
+
+# =============================================================================
+# Phase 8：客观路径确认加分（无事件层）
+# =============================================================================
+# 当 distribution_pattern 已识别慢性/路径型压力，且 market_relative 同时给出
+# 相对大盘弱势时，说明这不是单纯绝对下跌或市场共振，而是“个股自身
+# 供给压力/派发路径”更可信。该加分只使用客观行情行为，不使用 corporate events。
+OBJECTIVE_PATH_CONFIRMATION_BONUS = 8.0
+OBJECTIVE_PATH_TAGS: Tuple[str, ...] = (
+    "[CHRONIC_DISTRIBUTION_60D]",
+    "[FAILED_RECOVERY_60D]",
+    "[PATH_DRAWDOWN_60D]",
+)
+OBJECTIVE_MARKET_CONFIRM_TAGS: Tuple[str, ...] = (
+    "[UNDERPERFORM_INDEX_60PCT_20D]",
+    "[REL_RETURN_STRONG_UNDER]",
+    "[REL_RETURN_MILD_UNDER]",
+)
+TAG_OBJECTIVE_PATH_CONFIRMATION = "[COMPOSITE_RISK_OBJECTIVE_PATH_CONFIRMATION]"

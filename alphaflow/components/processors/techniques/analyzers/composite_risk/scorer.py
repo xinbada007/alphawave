@@ -77,6 +77,11 @@ class CompositeRiskScorer:
             for c in raw_scores
         }
         score_value = sum(weighted.values())
+        path_bonus, path_bonus_evidence = self._objective_path_confirmation(
+            distribution_pattern=distribution_pattern,
+            market_relative=market_relative,
+        )
+        score_value += path_bonus
         score_value = round(min(max(score_value, 0.0), 100.0), 2)
 
         # 7. sufficient_for_score 决策
@@ -123,6 +128,8 @@ class CompositeRiskScorer:
             tags.append(cfg.TAG_LOW_CONFIDENCE)
         if persistence_triggered:
             tags.append(cfg.TAG_NO_PERSISTENCE)
+        if path_bonus:
+            tags.append(cfg.TAG_OBJECTIVE_PATH_CONFIRMATION)
 
         out: Dict[str, Any] = {
             "data_quality": {
@@ -145,6 +152,12 @@ class CompositeRiskScorer:
                 "sufficient_for_score": sufficient,
                 "advisory_only":        advisory_only,
                 "persistence_check":    persistence_check,
+                "score_adjustments": {
+                    "objective_path_confirmation": {
+                        "bonus": round(path_bonus, 2),
+                        "evidence": path_bonus_evidence,
+                    },
+                },
                 "diagnostic_tags":      tags,
             },
             "score_breakdown": breakdown,
@@ -160,6 +173,35 @@ class CompositeRiskScorer:
             out["level"] = level  # advisory / 低置信时为 None
 
         return out
+
+    # -------------------------------------------------------------------------
+    # 内部：Phase 8 objective path confirmation
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _objective_path_confirmation(
+        *,
+        distribution_pattern: Optional[Mapping[str, Any]],
+        market_relative: Optional[Mapping[str, Any]],
+    ) -> Tuple[float, str]:
+        if not scorers._is_available(distribution_pattern) or not scorers._is_available(market_relative):
+            return 0.0, "unavailable"
+
+        dist_pressure = scorers._safe_get(distribution_pattern, "summary", "pressure_signals", default=[])
+        market_pressure = scorers._safe_get(market_relative, "summary", "pressure_signals", default=[])
+        if not isinstance(dist_pressure, list):
+            dist_pressure = []
+        if not isinstance(market_pressure, list):
+            market_pressure = []
+
+        dist_hits = [tag for tag in cfg.OBJECTIVE_PATH_TAGS if tag in dist_pressure]
+        market_hits = [tag for tag in cfg.OBJECTIVE_MARKET_CONFIRM_TAGS if tag in market_pressure]
+
+        if dist_hits and market_hits:
+            return (
+                float(cfg.OBJECTIVE_PATH_CONFIRMATION_BONUS),
+                f"path={dist_hits}; market={market_hits}",
+            )
+        return 0.0, "no objective path+market confirmation"
 
     # -------------------------------------------------------------------------
     # 内部：权重重分配（带 cap，分摊不下的进 unallocated）

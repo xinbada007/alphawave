@@ -78,6 +78,29 @@ AMIHUD_WINDOWS: Final[Tuple[int, ...]] = (5, 20)
 
 
 # =========================================================================
+# Path Pressure（客观市场行为路径压力，不使用事件层）
+# =========================================================================
+# 目标：捕捉“非单日爆量”的慢性/路径型派发：
+# - 过去 20/60D 持续下跌或相对弱势
+# - 下跌日成交量占优
+# - 触底后反弹失败
+PATH_PRESSURE_WINDOWS: Final[Tuple[int, ...]] = (20, 60)
+
+# 60D 从窗口内峰值回撤阈值（负数）
+PATH_DRAWDOWN_60D_THRESHOLD: Final[float] = -0.12
+PATH_DRAWDOWN_20D_THRESHOLD: Final[float] = -0.06
+
+# 下跌日占比 / 下跌日成交量集中度
+PATH_NEG_DAY_RATIO_THRESHOLD: Final[float] = 0.52
+PATH_DOWN_VOLUME_SHARE_THRESHOLD: Final[float] = 0.55
+PATH_DOWN_UP_VOLUME_RATIO_THRESHOLD: Final[float] = 1.15
+
+# 反弹失败：窗口内从峰值跌到谷底后，当前收盘从谷底恢复比例仍不足 50%
+PATH_FAILED_RECOVERY_DD_THRESHOLD: Final[float] = -0.10
+PATH_FAILED_RECOVERY_RATIO_MAX: Final[float] = 0.50
+
+
+# =========================================================================
 # 数据质量门槛
 # =========================================================================
 MIN_DAYS_FOR_PATTERN: Final[int] = 30
@@ -123,3 +146,10 @@ TAG_AMIHUD_LATEST: Final[Mapping[str, str]] = {
 
 TAG_CLV_WEAK_TREND_20D: Final[str] = "[CLV_WEAK_TREND_20D]"
 TAG_VWAP_BELOW_TREND_20D: Final[str] = "[VWAP_BELOW_60PCT_20D]"
+
+TAG_PATH_DRAWDOWN_60D: Final[str] = "[PATH_DRAWDOWN_60D]"
+TAG_PATH_DRAWDOWN_20D: Final[str] = "[PATH_DRAWDOWN_20D]"
+TAG_PATH_PERSISTENT_DOWN_60D: Final[str] = "[PATH_PERSISTENT_DOWN_60D]"
+TAG_DOWN_DAY_VOLUME_60D: Final[str] = "[DOWN_DAY_VOLUME_CONCENTRATION_60D]"
+TAG_FAILED_RECOVERY_60D: Final[str] = "[FAILED_RECOVERY_60D]"
+TAG_CHRONIC_DISTRIBUTION_60D: Final[str] = "[CHRONIC_DISTRIBUTION_60D]"

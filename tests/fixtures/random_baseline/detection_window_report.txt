@@ -1,0 +1,14 @@
+====================================================================================================
+Detection Window Audit — checkpoints 0/5/10/20/40/60d
+====================================================================================================
+OK=398 status_counts={'OK': 398, 'NO_ANCHOR': 2}
+TP=89 FP=126 TN=133 FN=50
+precision=41.4% recall=64.0% specificity=51.4%
+STRONG recall=26/30 = 86.7%
+
+Peak detection dt distribution (detected TRUE only):
+{0: 35, 5: 38, 10: 33, 20: 37, 40: 38, 60: 34}
+
+CSV: /data/dev/alphawave/scripts/../tests/fixtures/random_baseline/detection_window_results.csv
+Report: /data/dev/alphawave/scripts/../tests/fixtures/random_baseline/detection_window_report.txt
+====================================================================================================
