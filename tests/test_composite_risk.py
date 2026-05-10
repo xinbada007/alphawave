@@ -370,6 +370,85 @@ def c05():
 
 
 # ============================================================
+# P 组 — Persistence Gate (闸门 5)
+# ============================================================
+@_case("P01 ELEVATED + 持续异常 (count≥2) → level 不变")
+def p01():
+    # 让 score 落在 ELEVATED 区间 [55, 75)：volume EXTREME(80) + dist 1 sig(35) + rel ELEVATED(40)
+    out = CompositeRiskScorer().score(
+        volume_anomaly=mk_vol("EXTREME", extreme=2),
+        distribution_pattern=mk_dist(n_pressure=1),
+        market_relative=mk_rel(rv="ELEVATED", rr="INLINE"),
+    )
+    pc = out["data_quality"]["persistence_check"]
+    assert pc["count"] == 2 and pc["passed"] is True, pc
+    assert out["level"] == "ELEVATED", (out["score"], out["level"])
+    assert cfg.TAG_NO_PERSISTENCE not in out["data_quality"]["diagnostic_tags"]
+
+
+@_case("P02 ELEVATED + 单日噪声 (count<2) → cap 到 MODERATE + tag")
+def p02():
+    out = CompositeRiskScorer().score(
+        volume_anomaly=mk_vol("EXTREME", extreme=1),  # 仅 1 天 EXTREME → 不持续
+        distribution_pattern=mk_dist(n_pressure=1),
+        market_relative=mk_rel(rv="ELEVATED", rr="INLINE"),
+    )
+    pc = out["data_quality"]["persistence_check"]
+    assert pc["count"] == 1 and pc["passed"] is False, pc
+    assert out["level"] == "MODERATE", (out["score"], out["level"])
+    assert cfg.TAG_NO_PERSISTENCE in out["data_quality"]["diagnostic_tags"]
+    # raw score 不变（仅 cap level，保持透明）
+    assert out["score"] >= 55.0, out["score"]
+
+
+@_case("P03 score < ELEVATED 阈值 → gate 不参与（level 已是 MODERATE）")
+def p03():
+    # 低分 → MODERATE，gate 不应 cap（不是 ELEVATED 输入）
+    out = CompositeRiskScorer().score(
+        volume_anomaly=mk_vol("ELEVATED"),  # vol=35
+        distribution_pattern=mk_dist(n_pressure=0),
+        market_relative=mk_rel(rv="INLINE", rr="INLINE"),
+    )
+    assert out["level"] in ("LOW", "MODERATE"), out["level"]
+    # 即使 persistence 不 pass，也不应触发 tag（gate 仅作用于 ELEVATED）
+    assert cfg.TAG_NO_PERSISTENCE not in out["data_quality"]["diagnostic_tags"]
+
+
+@_case("P04 HIGH 单日 catastrophic → gate 不 cap (level≥HIGH 不门控)")
+def p04():
+    # 推到 HIGH (≥75)：EXTREME(80)*0.4 + 4 pressure(95)*0.3 + HISTORIC rel(95)*0.2 = 32+28.5+19=79.5
+    out = CompositeRiskScorer().score(
+        volume_anomaly=mk_vol("EXTREME", extreme=0),  # 持续=0，但 level=HIGH 不 gate
+        distribution_pattern=mk_dist(n_pressure=4),
+        market_relative=mk_rel(rv="HISTORIC", rr="STRONG_UNDER"),
+    )
+    pc = out["data_quality"]["persistence_check"]
+    assert pc["passed"] is False, pc  # 持续性确实没过
+    assert out["score"] >= 75.0, out["score"]
+    assert out["level"] in ("HIGH", "CRITICAL"), out["level"]  # 不被 cap
+    assert cfg.TAG_NO_PERSISTENCE not in out["data_quality"]["diagnostic_tags"]
+
+
+@_case("P05 volume profile 不可判定 → gate 守护性放行 (passed=None)")
+def p05():
+    # mk_vol with sufficient=False → essential gate 已先拦截，level=None
+    # 用直接构造一个"profile 在但无 lookbacks"的边界
+    broken_vol = {
+        "data_quality": {"primary_dimension": "volume", "sufficient_for_profile": True},
+        "volume": {"latest_day": {"tier": "EXTREME"}},  # 缺 lookbacks
+    }
+    out = CompositeRiskScorer().score(
+        volume_anomaly=broken_vol,
+        distribution_pattern=mk_dist(n_pressure=1),
+        market_relative=mk_rel(rv="ELEVATED"),
+    )
+    pc = out["data_quality"]["persistence_check"]
+    assert pc["passed"] is None and pc["count"] is None, pc
+    # 守护性放行：不触发 NO_PERSISTENCE tag（数据无法判定，不该误伤）
+    assert cfg.TAG_NO_PERSISTENCE not in out["data_quality"]["diagnostic_tags"]
+
+
+# ============================================================
 # Runner
 # ============================================================
 def main():

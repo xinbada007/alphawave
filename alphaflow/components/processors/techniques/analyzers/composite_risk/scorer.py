@@ -89,6 +89,15 @@ class CompositeRiskScorer:
         # 8. level 仅在 sufficient 时输出
         level = self._classify_level(score_value) if sufficient else None
 
+        # 8b. 闸门 5：persistence gate — 仅对 ELEVATED 做"持续性"约束
+        # 防止单日异常事件（产品发布、单日暴量噪声）被推升至 ELEVATED；
+        # HIGH/CRITICAL 不 gate（catastrophic 单日事件应被允许直升）。
+        persistence_check = self._persistence_gate(volume_anomaly)
+        persistence_triggered = False
+        if level in cfg.PERSISTENCE_GATE_LEVELS and persistence_check["passed"] is False:
+            level = cfg.PERSISTENCE_DOWNGRADE_TO
+            persistence_triggered = True
+
         # 9. primary_drivers
         drivers = self._primary_drivers(raw_scores, effective, weighted, evidences)
 
@@ -112,6 +121,8 @@ class CompositeRiskScorer:
             tags.append(cfg.TAG_ADVISORY_ONLY)
         if confidence_floor_breach:
             tags.append(cfg.TAG_LOW_CONFIDENCE)
+        if persistence_triggered:
+            tags.append(cfg.TAG_NO_PERSISTENCE)
 
         out: Dict[str, Any] = {
             "data_quality": {
@@ -133,6 +144,7 @@ class CompositeRiskScorer:
                 "confidence_level":     confidence_level,
                 "sufficient_for_score": sufficient,
                 "advisory_only":        advisory_only,
+                "persistence_check":    persistence_check,
                 "diagnostic_tags":      tags,
             },
             "score_breakdown": breakdown,
@@ -228,6 +240,38 @@ class CompositeRiskScorer:
             if value < threshold:
                 return label
         return cfg.LEVEL_TIERS[-1][1]
+
+    # -------------------------------------------------------------------------
+    # 内部：闸门 5 — persistence gate
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _persistence_gate(
+        volume_profile: Optional[Mapping[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        判定近 LEVEL_PERSISTENCE_WINDOW 内是否有 ≥ MIN_DAYS 个 EXTREME+ 异常天。
+
+        返回结构：
+          {window, threshold, count, passed}
+          - passed=True：count ≥ threshold（持续异常，允许 ELEVATED+）
+          - passed=False：count 明确 < threshold（单日噪声，应 cap）
+          - passed=None：无法判定（volume profile 缺失/损坏）→ 守护性放行，
+                        不在缺数据时误伤 — essential gate 已先拦截真缺席场景。
+        """
+        count = scorers.count_extreme_days(volume_profile, cfg.LEVEL_PERSISTENCE_WINDOW)
+        if count is None:
+            return {
+                "window":    cfg.LEVEL_PERSISTENCE_WINDOW,
+                "threshold": cfg.LEVEL_PERSISTENCE_MIN_DAYS,
+                "count":     None,
+                "passed":    None,
+            }
+        return {
+            "window":    cfg.LEVEL_PERSISTENCE_WINDOW,
+            "threshold": cfg.LEVEL_PERSISTENCE_MIN_DAYS,
+            "count":     int(count),
+            "passed":    bool(count >= cfg.LEVEL_PERSISTENCE_MIN_DAYS),
+        }
 
     # -------------------------------------------------------------------------
     # 内部：primary_drivers

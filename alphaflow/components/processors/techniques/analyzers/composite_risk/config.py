@@ -147,8 +147,27 @@ ROLLING_EXTREME_BONUS_THRESHOLD = 3   # 近窗内 EXTREME+BLOWOUT+HISTORIC ≥ 3
 ROLLING_EXTREME_BONUS_POINTS = 10
 VOLUME_MAX_SCORE = 95  # 加 bonus 后封顶
 
+# 这些 tier（来自 volume_anomaly/config.py::TIER_ORDER）被视为"异常天"
+# 用于 rolling bonus 计数 + persistence gate 计数 — 共用一份语义
+EXTREME_PLUS_TIERS: Tuple[str, ...] = ("EXTREME", "BLOWOUT", "HISTORIC")
+
 # market_relative: index_anomalous=True 时该子分系数（剥离系统性放量）
 INDEX_ANOMALOUS_DAMPING = 0.5
+
+
+# =============================================================================
+# 闸门 5：持续性门槛（防 sweep 模式下的单日 ELEVATED 误报）
+# =============================================================================
+# 仅 ELEVATED level（55 ≤ score < 75）需 persistence；HIGH/CRITICAL（≥ 75）不 gate
+# —— 单日 catastrophic 事件（如 NFLX 财报雷）应被允许直升 HIGH，无需历史佐证。
+#
+# 持续性 = volume_anomaly.<primary>.lookbacks.<window>.by_tier 中
+#          EXTREME_PLUS_TIERS 之和 ≥ MIN_DAYS
+# 与 ROLLING_BONUS_WINDOW 用同一窗口（20d）保持语义一致。
+LEVEL_PERSISTENCE_WINDOW: str = ROLLING_BONUS_WINDOW
+LEVEL_PERSISTENCE_MIN_DAYS: int = 2
+PERSISTENCE_GATE_LEVELS: Tuple[str, ...] = ("ELEVATED",)   # 仅在哪些 level 上 gate
+PERSISTENCE_DOWNGRADE_TO: str = "MODERATE"
 
 
 # =============================================================================
@@ -158,3 +177,4 @@ TAG_INSUFFICIENT_ESSENTIAL = "[COMPOSITE_RISK_NO_ESSENTIAL]"
 TAG_INSUFFICIENT_QUORUM    = "[COMPOSITE_RISK_LOW_QUORUM]"
 TAG_LOW_CONFIDENCE         = "[COMPOSITE_RISK_LOW_CONFIDENCE]"
 TAG_ADVISORY_ONLY          = "[COMPOSITE_RISK_ADVISORY_ONLY]"
+TAG_NO_PERSISTENCE         = "[COMPOSITE_RISK_NO_PERSISTENCE]"

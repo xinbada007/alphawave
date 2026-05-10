@@ -54,6 +54,31 @@ def _safe_get(d: Optional[Mapping[str, Any]], *keys: str, default: Any = None) -
     return cur
 
 
+def count_extreme_days(profile: Optional[Mapping[str, Any]], window: str) -> Optional[int]:
+    """
+    通用 helper：统计 volume_anomaly_profile 在指定 window 内
+    EXTREME + BLOWOUT + HISTORIC 的累计天数。
+
+    复用场景：
+      1. score_volume_anomaly 的 rolling bonus 计数
+      2. CompositeRiskScorer._persistence_gate 的持续性判定
+
+    返回 None 表示 profile 不可用 / 无法判定（调用方决定如何降级）；
+    返回 int 0 表示可判定且无异常天。
+    """
+    if not _is_available(profile):
+        return None
+    dq = profile.get("data_quality") or {}
+    primary = dq.get("primary_dimension") or "volume"
+    sub = profile.get(primary) or profile.get("volume")
+    if not isinstance(sub, Mapping):
+        return None
+    by_tier = _safe_get(sub, "lookbacks", window, "by_tier", default=None)
+    if not isinstance(by_tier, Mapping):
+        return None
+    return sum(int(by_tier.get(t, 0) or 0) for t in cfg.EXTREME_PLUS_TIERS)
+
+
 # =============================================================================
 # 1. volume_anomaly 子分
 # =============================================================================
@@ -85,17 +110,8 @@ def score_volume_anomaly(profile: Optional[Mapping[str, Any]]) -> SubScore:
     if base is None:
         return None, f"unknown tier: {tier!r}"
 
-    # rolling 加成：从 lookbacks.<window>.by_tier 计数 EXTREME / BLOWOUT / HISTORIC
-    # （profile 实际结构：sub.lookbacks.{5d/20d/60d/252d}.by_tier — 无 sub.rolling 顶级 key）
-    by_tier = _safe_get(sub, "lookbacks", cfg.ROLLING_BONUS_WINDOW, "by_tier", default={}) or {}
-    if isinstance(by_tier, Mapping):
-        extreme_count = (
-            int(by_tier.get("EXTREME", 0) or 0)
-            + int(by_tier.get("BLOWOUT", 0) or 0)
-            + int(by_tier.get("HISTORIC", 0) or 0)
-        )
-    else:
-        extreme_count = 0
+    # rolling 加成：复用 count_extreme_days helper（与 persistence gate 同源）
+    extreme_count = count_extreme_days(profile, cfg.ROLLING_BONUS_WINDOW) or 0
 
     bonus = 0
     if extreme_count >= cfg.ROLLING_EXTREME_BONUS_THRESHOLD:
