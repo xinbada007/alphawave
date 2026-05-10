@@ -34,6 +34,21 @@ SAMPLES = [
     ("0939_HK_normal", "0939.HK", "2024-06-30", "normal_ccb"),
     ("600036_SS_normal", "600036.SS", "2024-06-30", "normal_cmb"),
     ("AAPL_normal", "AAPL", "2024-09-30", "normal_apple"),
+    # =============================================================================
+    # V2 验证集（与 V1 不重叠的行业 / 事件类型，进一步核实体系正确性）
+    # =============================================================================
+    # 派发 V2（多元事件类型：监管暂停 / 利润预警 / 财报雷 / 反垄断 / 增发冲击）
+    ("BABA_v2",    "BABA",     "2020-11-03", "distribution_baba_ant_ipo_suspended"),
+    ("SNAP_v2",    "SNAP",     "2022-05-24", "distribution_snap_profit_warning"),
+    ("COIN_v2",    "COIN",     "2022-05-11", "distribution_coin_q1_meltdown"),
+    ("PTON_v2",    "PTON",     "2022-01-20", "distribution_pton_production_halt"),
+    ("TSLA_v2",    "TSLA",     "2020-09-08", "distribution_tsla_sp500_rejection"),
+    # 正常 V2（防御型 / 公用事业 / 大行）
+    ("JNJ_normal_v2",      "JNJ",       "2024-09-30", "normal_johnson"),
+    ("KO_normal_v2",       "KO",        "2024-09-30", "normal_cocacola"),
+    ("PEP_normal_v2",      "PEP",       "2024-09-30", "normal_pepsi"),
+    ("0066_HK_normal_v2",  "0066.HK",   "2024-08-30", "normal_mtr_pre_stimulus"),
+    ("600028_SS_normal_v2","600028.SS", "2024-08-30", "normal_sinopec_pre_stimulus"),
 ]
 
 # 事件锚点 ±180 天：让 analyzer 有足够 lookback (60 + 60 + 缓冲)
