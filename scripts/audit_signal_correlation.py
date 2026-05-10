@@ -77,6 +77,54 @@ SAMPLES = [
     AuditSample("PEP_normal_v2",        "PEP",       "2024-09-30", "normal", "PEP quiet"),
     AuditSample("0066_HK_normal_v2",    "0066.HK",   "2024-08-30", "normal", "MTR quiet"),
     AuditSample("600028_SS_normal_v2",  "600028.SH", "2024-08-30", "normal", "Sinopec quiet"),
+
+    # =========================================================================
+    # V3 派发（20）— 最终扩展回归
+    # =========================================================================
+    AuditSample("RBLX_v3",      "RBLX",      "2022-02-16", "distribution", "Roblox Q4 miss"),
+    AuditSample("ZM_v3",        "ZM",        "2021-09-01", "distribution", "Zoom growth collapse"),
+    AuditSample("DOCU_v3",      "DOCU",      "2021-12-03", "distribution", "DocuSign billings miss"),
+    AuditSample("CVNA_v3",      "CVNA",      "2022-05-11", "distribution", "Carvana Q1 disaster"),
+    AuditSample("W_v3",         "W",         "2022-08-12", "distribution", "Wayfair demand collapse"),
+    AuditSample("DIS_v3",       "DIS",       "2022-08-11", "distribution", "Disney streaming miss"),
+    AuditSample("LULU_v3",      "LULU",      "2024-06-06", "distribution", "Lulu guidance cut"),
+    AuditSample("SPCE_v3",      "SPCE",      "2021-07-12", "distribution", "SPCE post-Branson dump"),
+    AuditSample("PLUG_v3",      "PLUG",      "2021-03-02", "distribution", "Plug going concern"),
+    AuditSample("HOOD_v3",      "HOOD",      "2022-04-28", "distribution", "Hood Q1 disaster"),
+    AuditSample("PDD_v3",       "PDD",       "2022-03-14", "distribution", "PDD ADR panic"),
+    AuditSample("BIDU_v3",      "BIDU",      "2022-03-14", "distribution", "BIDU ADR panic"),
+    AuditSample("9988_HK_v3",   "9988.HK",   "2021-12-23", "distribution", "BABA HK drift low"),
+    AuditSample("0992_HK_v3",   "0992.HK",   "2024-04-15", "distribution", "Lenovo pullback"),
+    AuditSample("9618_HK_v3",   "9618.HK",   "2022-03-15", "distribution", "JD HK panic"),
+    AuditSample("002475_SS_v3", "002475.SZ", "2021-08-30", "distribution", "Luxshare Apple shock"),
+    AuditSample("300750_SS_v3", "300750.SZ", "2022-04-25", "distribution", "CATL Q1 miss"),
+    AuditSample("9888_HK_v3",   "9888.HK",   "2024-09-13", "distribution", "Baidu HK drift"),
+    AuditSample("F_v3",         "F",         "2024-07-25", "distribution", "Ford Q2 miss"),
+    AuditSample("INTC_v3",      "INTC",      "2024-08-02", "distribution", "Intel layoffs+dividend cut"),
+
+    # =========================================================================
+    # V3 正常（20）— 最终扩展回归
+    # =========================================================================
+    AuditSample("BRK_B_normal_v3",     "BRK-B",     "2024-04-30", "normal", "Berkshire quiet"),
+    AuditSample("WMT_normal_v3",       "WMT",       "2024-03-29", "normal", "Walmart quiet"),
+    AuditSample("PG_normal_v3",        "PG",        "2024-03-29", "normal", "P&G quiet"),
+    AuditSample("MCD_normal_v3",       "MCD",       "2024-03-29", "normal", "McDonald's quiet"),
+    AuditSample("COST_normal_v3",      "COST",      "2024-04-30", "normal", "Costco quiet"),
+    AuditSample("V_normal_v3",         "V",         "2024-03-29", "normal", "Visa quiet"),
+    AuditSample("HD_normal_v3",        "HD",        "2024-04-30", "normal", "HomeDepot quiet"),
+    AuditSample("VZ_normal_v3",        "VZ",        "2024-03-29", "normal", "Verizon quiet"),
+    AuditSample("CSCO_normal_v3",      "CSCO",      "2024-03-29", "normal", "Cisco quiet"),
+    AuditSample("ADBE_normal_v3",      "ADBE",      "2024-04-30", "normal", "Adobe quiet"),
+    AuditSample("ORCL_normal_v3",      "ORCL",      "2024-04-30", "normal", "Oracle quiet"),
+    AuditSample("JPM_normal_v3",       "JPM",       "2024-03-29", "normal", "JPMorgan quiet"),
+    AuditSample("0001_HK_normal_v3",   "0001.HK",   "2024-06-30", "normal", "CK Hutchison quiet"),
+    AuditSample("0005_HK_normal_v3",   "0005.HK",   "2024-06-30", "normal", "HSBC quiet"),
+    AuditSample("1299_HK_normal_v3",   "1299.HK",   "2024-06-30", "normal", "AIA quiet"),
+    AuditSample("1398_HK_normal_v3",   "1398.HK",   "2024-06-30", "normal", "ICBC quiet"),
+    AuditSample("0883_HK_normal_v3",   "0883.HK",   "2024-06-30", "normal", "CNOOC quiet"),
+    AuditSample("601318_SS_normal_v3", "601318.SH", "2024-06-28", "normal", "Ping An quiet"),
+    AuditSample("600276_SS_normal_v3", "600276.SH", "2024-06-28", "normal", "Hengrui quiet"),
+    AuditSample("000333_SS_normal_v3", "000333.SZ", "2024-06-28", "normal", "Midea quiet"),
 ]
 
 PRE_DAYS = 10   # 锚点前扫描天数
