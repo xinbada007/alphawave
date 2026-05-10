@@ -59,8 +59,9 @@ def _safe_get(d: Optional[Mapping[str, Any]], *keys: str, default: Any = None) -
 # =============================================================================
 def score_volume_anomaly(profile: Optional[Mapping[str, Any]]) -> SubScore:
     """
-    依据：volume.latest_day.tier (NORMAL/ELEVATED/SPIKE/EXTREME/BLOWOUT/HISTORIC)
-    加成：volume.rolling.by_tier 中 EXTREME+BLOWOUT+HISTORIC 之和 ≥ 阈值 → +bonus
+    依据：<primary>.latest_day.tier (NORMAL/ELEVATED/SPIKE/EXTREME/BLOWOUT/HISTORIC)
+    加成：<primary>.lookbacks.{ROLLING_BONUS_WINDOW}.by_tier 中
+          EXTREME+BLOWOUT+HISTORIC 之和 ≥ ROLLING_EXTREME_BONUS_THRESHOLD → +bonus
     封顶：VOLUME_MAX_SCORE
     """
     if not _is_available(profile):
@@ -84,8 +85,9 @@ def score_volume_anomaly(profile: Optional[Mapping[str, Any]]) -> SubScore:
     if base is None:
         return None, f"unknown tier: {tier!r}"
 
-    # rolling 加成
-    by_tier = _safe_get(sub, "rolling", "by_tier", default={}) or {}
+    # rolling 加成：从 lookbacks.<window>.by_tier 计数 EXTREME / BLOWOUT / HISTORIC
+    # （profile 实际结构：sub.lookbacks.{5d/20d/60d/252d}.by_tier — 无 sub.rolling 顶级 key）
+    by_tier = _safe_get(sub, "lookbacks", cfg.ROLLING_BONUS_WINDOW, "by_tier", default={}) or {}
     if isinstance(by_tier, Mapping):
         extreme_count = (
             int(by_tier.get("EXTREME", 0) or 0)
@@ -102,7 +104,7 @@ def score_volume_anomaly(profile: Optional[Mapping[str, Any]]) -> SubScore:
     raw = min(base + bonus, cfg.VOLUME_MAX_SCORE)
     evidence = f"tier={tier}"
     if bonus:
-        evidence += f", rolling_extreme={extreme_count}d (+{bonus})"
+        evidence += f", {cfg.ROLLING_BONUS_WINDOW}_extreme={extreme_count}d (+{bonus})"
     return float(raw), evidence
 
 

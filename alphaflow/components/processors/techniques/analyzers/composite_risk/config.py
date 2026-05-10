@@ -139,8 +139,11 @@ FLOW_SIGNAL_COUNT_SCORES = {
 }
 FLOW_MAX_SCORE = 95  # 4+ 信号封顶
 
-# rolling 异常天数加成（volume_anomaly.volume.rolling.by_tier）
-ROLLING_EXTREME_BONUS_THRESHOLD = 3   # 近窗内 EXTREME+HIGH ≥ 3 天 → +bonus
+# rolling 异常天数加成
+# 取 lookbacks 中的哪个窗口 — 必须是 volume_anomaly/config.py::LOOKBACK_WINDOWS 之一
+# 选 20d：~1 个月交易窗口，对"近期密集出货"最敏感（5d 噪声大、60d/252d 太迟钝）
+ROLLING_BONUS_WINDOW = "20d"
+ROLLING_EXTREME_BONUS_THRESHOLD = 3   # 近窗内 EXTREME+BLOWOUT+HISTORIC ≥ 3 天 → +bonus
 ROLLING_EXTREME_BONUS_POINTS = 10
 VOLUME_MAX_SCORE = 95  # 加 bonus 后封顶
 

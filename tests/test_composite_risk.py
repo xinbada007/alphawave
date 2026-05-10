@@ -38,8 +38,10 @@ def _case(name):
 # ============================================================
 # 辅助：构造各种 mock profile
 # ============================================================
-def mk_vol(tier="SPIKE", primary="volume", extreme=0, blowout=0, historic=0, sufficient=True):
-    """volume_anomaly_profile mock — tier 必须是 TIER_ORDER 的真实值"""
+def mk_vol(tier="SPIKE", primary="volume", extreme=0, blowout=0, historic=0, sufficient=True,
+           bonus_window="20d"):
+    """volume_anomaly_profile mock — 严格对齐生产结构：
+    <primary>.lookbacks.<window>.by_tier (非 .rolling.by_tier)。"""
     return {
         "data_quality": {
             "primary_dimension": primary,
@@ -47,11 +49,15 @@ def mk_vol(tier="SPIKE", primary="volume", extreme=0, blowout=0, historic=0, suf
         },
         primary: {
             "latest_day": {"tier": tier},
-            "rolling": {"by_tier": {
-                "EXTREME":  extreme,
-                "BLOWOUT":  blowout,
-                "HISTORIC": historic,
-            }},
+            "lookbacks": {
+                bonus_window: {
+                    "by_tier": {
+                        "EXTREME":  extreme,
+                        "BLOWOUT":  blowout,
+                        "HISTORIC": historic,
+                    },
+                },
+            },
         },
     }
 
@@ -89,11 +95,11 @@ def s01():
     assert "tier=SPIKE" in evi
 
 
-@_case("S02 volume EXTREME + rolling 3 → 80+10=90")
+@_case("S02 volume EXTREME + 20d rolling 3 → 80+10=90")
 def s02():
     raw, evi = scorers.score_volume_anomaly(mk_vol("EXTREME", extreme=2, blowout=1))
     assert raw == 90.0, raw
-    assert "rolling_extreme=3d" in evi
+    assert "20d_extreme=3d" in evi
 
 
 @_case("S03 volume NORMAL no rolling → 0")
