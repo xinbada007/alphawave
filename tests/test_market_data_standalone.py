@@ -1,7 +1,10 @@
 import asyncio
 import pandas as pd
+import pytest
 from alphaflow.components.collectors.market_data import MarketDataCollector
 from alphaflow.core.schema import AnalysisContext, ResearchPack
+
+pytestmark = pytest.mark.skip(reason="manual network smoke test; run directly with python when needed")
 
 async def test_market_data():
     # 1. 准备上下文

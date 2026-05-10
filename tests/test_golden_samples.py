@@ -177,7 +177,7 @@ class CaseResult:
     note: str
 
 
-def test_one(s: GoldenSample) -> CaseResult:
+def run_one(s: GoldenSample) -> CaseResult:
     # 关键：截取到 anchor 日（含），让 latest_day = 事件日。
     # composite_risk 的 score 主要由 latest_day.tier 驱动；fixture 末尾若远离
     # 事件日则市场已平复 → latest_day=NORMAL → score=0，与"派发期是否被捕获"
@@ -226,7 +226,7 @@ def main() -> int:
 
     results: List[CaseResult] = []
     for s in DISTRIBUTION_SAMPLES + NORMAL_SAMPLES:
-        results.append(test_one(s))
+        results.append(run_one(s))
 
     print(f"\n{'alias':<22}{'symbol':<14}{'class':<14}{'score':>7}  "
           f"{'level':<10}{'tier_now':<10}{'extreme':>8}{'sigs':>6}  status")

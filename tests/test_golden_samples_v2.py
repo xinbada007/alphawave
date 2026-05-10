@@ -27,7 +27,7 @@ from typing import List
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from tests.test_golden_samples import (  # noqa: E402
-    GoldenSample, CaseResult, test_one,
+    GoldenSample, CaseResult, run_one,
     DIST_SCORE_MIN, NORMAL_SCORE_MAX,
 )
 
@@ -57,7 +57,7 @@ def main() -> int:
 
     results: List[CaseResult] = []
     for s in DISTRIBUTION_SAMPLES_V2 + NORMAL_SAMPLES_V2:
-        results.append(test_one(s))
+        results.append(run_one(s))
 
     print(f"\n{'alias':<24}{'symbol':<14}{'class':<14}{'score':>7}  "
           f"{'level':<10}{'tier_now':<10}{'extreme':>8}{'sigs':>6}  status")
