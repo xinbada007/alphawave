@@ -5,11 +5,16 @@ Market Data Fetcher Base - 市场数据抓取器基类
 """
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import ClassVar, Dict, Any, List, Optional, Sequence
 import pandas as pd
 import akshare as ak  # type: ignore
 
 from alphaflow.core.acl.core_adapter import DynamicFinancialAdapter
+from alphaflow.core.utils import (
+    normalize_date_column,
+    coerce_numeric_columns,
+)
+from .enrichers import DEFAULT_ENRICHERS, DerivedColumnEnricher
 
 
 # ==========================================
@@ -34,9 +39,14 @@ class BaseMarketFetcher(ABC):
     职责：
     - fetch_price(): 获取 OHLCV 时间序列
     - fetch_metrics(): 获取估值指标快照
+    - _clean_dataframe(): 通用清洗 (rename / type / date / 派生列)
     """
     
     name: str = "BaseMarketFetcher"
+
+    #: 派生列计算器注册表 (类级，子类可覆写以追加/替换)。
+    #: 使用元组以防运行时意外变异；扩展请定义新的 ClassVar 元组而非 .append()。
+    enrichers: ClassVar[Sequence[DerivedColumnEnricher]] = DEFAULT_ENRICHERS
     
     def __init__(self):
         """初始化 - 子类应设置 adapter"""
@@ -54,42 +64,45 @@ class BaseMarketFetcher(ABC):
     
     def _clean_dataframe(self, df: pd.DataFrame, rename_map: Dict[str, str]) -> pd.DataFrame:
         """
-        清洗 DataFrame
+        清洗 DataFrame：rename → date 归一 → numeric (NaN→0.0) → enrichers
         
-        Args:
-            df: 原始 DataFrame
-            rename_map: 列名重命名映射
-            
-        Returns:
-            清洗后的 DataFrame
+        注意：market 业务允许 NaN 数值列回填 0.0（与历史行为兼容）；
+        如需保留 NaN 语义，请使用 `BaseBenchmarkFetcher._clean_index_df` 形态。
         """
-        if df.empty:
-            return df
+        if df is None or df.empty:
+            return df if df is not None else pd.DataFrame()
         
-        # 重命名
         if rename_map:
             df = df.rename(columns=rename_map)
         
-        # 统一 date 列
-        if "date" not in df.columns:
-            for c in ["Date", "DATE", "时间", "日期"]:
-                if c in df.columns:
-                    df = df.rename(columns={c: "date"})
-                    break
+        df = normalize_date_column(df)
+        df = coerce_numeric_columns(
+            df,
+            columns=("open", "high", "low", "close", "volume"),
+            fill_na=0.0,
+        )
         
-        # 确保 date 是 datetime
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        # 派生列计算 (策略模式：表驱动，开闭原则)
+        df = self._apply_enrichers(df)
         
-        # 删除空行
-        df = df.dropna(subset=["date"])
+        return df
+
+    def _apply_enrichers(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        应用注册的派生列计算器。
         
-        # 数值清洗
-        numeric_cols = ["open", "high", "low", "close", "volume"]
-        for c in numeric_cols:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+        子类可覆写本方法以完全定制派生流程；多数情况下应通过覆写
+        类变量 `enrichers` (ClassVar 元组) 来追加/替换计算器。
         
+        Args:
+            df: 已完成 rename/type 清洗的 DataFrame
+            
+        Returns:
+            追加了派生列的 DataFrame
+        """
+        for enricher in self.enrichers:
+            if enricher.can_apply(df):
+                df = enricher.apply(df)
         return df
     
     def _map_standard_metrics(self, data: Dict[str, Any], provider_id: str = "unknown") -> Dict[str, Any]:

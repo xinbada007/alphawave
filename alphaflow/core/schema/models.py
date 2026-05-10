@@ -259,6 +259,17 @@ class ResearchPack(BaseModel):
     market_data: Optional[DataFrameModel] = None  # OHLCV 时间序列
     market_metrics: Optional[Dict[str, Any]] = None  # 市场快照指标：市值、PE、PB、PS、EPS等
     market_data_meta: Optional[Dict[str, Any]] = None  # 市场数据元信息：provider、columns等
+
+    # ---- Benchmark / 大盘指数（Phase 5：market-relative 归一化所需）
+    # 与 market_data / market_data_meta 严格对称：分别承载 OHLCV 与来源元信息
+    benchmark_data: Optional[DataFrameModel] = None  # 大盘指数 OHLCV（HSI / HS300 / SPY 等）
+    benchmark_meta: Optional[Dict[str, Any]] = None  # benchmark_symbol / source / status 等
+
+    # ---- Flow Signals / 资金流（Phase 7：南向 / 大宗 / 龙虎榜，可降级）
+    # flow_data 是 dict（异构子源）：{"southbound": DataFrameModel, "block_trade": DataFrameModel, "lhb": ...}
+    # 缺源就不放 key（保持 None / 空）；analyzer Null Object 降级
+    flow_data: Optional[Dict[str, DataFrameModel]] = None
+    flow_meta: Optional[Dict[str, Any]] = None  # primary_source / per-source 状态
     fundamentals: Optional[Dict[str, Any]] = Field(default_factory=dict)  # 财务数据
 
     # 非结构化/文本数据

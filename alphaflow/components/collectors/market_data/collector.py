@@ -33,14 +33,7 @@ class MarketDataCollector(BaseCollector):
     async def fetch_data(self, context: AnalysisContext, **kwargs) -> ComponentOutput:
         """执行抓取流程"""
         # 1. 标准解包
-        input_data = kwargs.get("input_data")
-        pack = (
-            input_data.payload
-            if isinstance(input_data, ComponentOutput)
-            else input_data
-        )
-        if pack is None:
-            pack = ResearchPack(symbol=context.symbols[0])
+        pack = self._unpack_pack(context, kwargs)
 
         symbol = pack.symbol
         target_days = context.metadata.get("days", 250)
