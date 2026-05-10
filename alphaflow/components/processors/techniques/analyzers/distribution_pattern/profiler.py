@@ -50,8 +50,8 @@ from .config import (
     MIN_DAYS_FOR_PATTERN,
     PATH_DOWN_UP_VOLUME_RATIO_THRESHOLD,
     PATH_DOWN_VOLUME_SHARE_THRESHOLD,
-    PATH_DRAWDOWN_20D_THRESHOLD,
-    PATH_DRAWDOWN_60D_THRESHOLD,
+    PATH_DRAWDOWN_20D_CONFIRMED_THRESHOLD,
+    PATH_DRAWDOWN_60D_CONFIRMED_THRESHOLD,
     PATH_FAILED_RECOVERY_DD_THRESHOLD,
     PATH_FAILED_RECOVERY_RATIO_MAX,
     PATH_NEG_DAY_RATIO_THRESHOLD,
@@ -60,11 +60,9 @@ from .config import (
     TAG_CLV_LATEST,
     TAG_CLV_WEAK_TREND_20D,
     TAG_CHRONIC_DISTRIBUTION_60D,
-    TAG_DOWN_DAY_VOLUME_60D,
     TAG_FAILED_RECOVERY_60D,
     TAG_PATH_DRAWDOWN_20D,
     TAG_PATH_DRAWDOWN_60D,
-    TAG_PATH_PERSISTENT_DOWN_60D,
     TAG_VWAP_BELOW_TREND_20D,
     TAG_VWAP_LATEST,
     VWAP_BELOW_TREND_PCT_THRESHOLD,
@@ -242,9 +240,6 @@ class DistributionPatternProfiler:
         b60 = block.get("60d") or {}
 
         dd20 = b20.get("drawdown_from_peak")
-        if dd20 is not None and dd20 <= PATH_DRAWDOWN_20D_THRESHOLD:
-            pressure.append(TAG_PATH_DRAWDOWN_20D)
-
         dd60 = b60.get("drawdown_from_peak")
         max_dd60 = b60.get("max_drawdown")
         neg60 = b60.get("neg_day_ratio")
@@ -267,10 +262,10 @@ class DistributionPatternProfiler:
 
         # 原子条件只作为 evidence 留在 path_pressure block 中；summary.pressure 只发
         # 组合信号，避免把普通市场下跌/短期波动误计为派发风险。
-        if dd20 is not None and dd20 <= -0.10 and down_volume:
+        if dd20 is not None and dd20 <= PATH_DRAWDOWN_20D_CONFIRMED_THRESHOLD and down_volume:
             pressure.append(TAG_PATH_DRAWDOWN_20D)
 
-        if dd60 is not None and dd60 <= -0.18 and down_volume:
+        if dd60 is not None and dd60 <= PATH_DRAWDOWN_60D_CONFIRMED_THRESHOLD and down_volume:
             pressure.append(TAG_PATH_DRAWDOWN_60D)
 
         if (
@@ -280,8 +275,6 @@ class DistributionPatternProfiler:
             and down_volume
         ):
             pressure.append(TAG_CHRONIC_DISTRIBUTION_60D)
-            pressure.append(TAG_PATH_PERSISTENT_DOWN_60D)
-            pressure.append(TAG_DOWN_DAY_VOLUME_60D)
 
         if failed_recovery and (persistent_down or down_volume):
             pressure.append(TAG_FAILED_RECOVERY_60D)

@@ -216,6 +216,41 @@ def score_flow_signals(profile: Optional[Mapping[str, Any]]) -> SubScore:
 
 
 # =============================================================================
+# Cross-component objective confirmation（纯函数）
+# =============================================================================
+def objective_path_confirmation(
+    distribution_pattern: Optional[Mapping[str, Any]],
+    market_relative: Optional[Mapping[str, Any]],
+) -> Tuple[float, str]:
+    """
+    Phase 8 客观路径确认加分。
+
+    仅在 distribution_pattern 给出路径压力，且 market_relative 给出相对弱势时
+    返回 bounded bonus。此函数仍只依赖 profile dict + config，不触碰 scorer 状态，
+    便于复用和单测。
+    """
+    if not _is_available(distribution_pattern) or not _is_available(market_relative):
+        return 0.0, "unavailable"
+
+    dist_pressure = _safe_get(distribution_pattern, "summary", "pressure_signals", default=[])
+    market_pressure = _safe_get(market_relative, "summary", "pressure_signals", default=[])
+    if not isinstance(dist_pressure, list):
+        dist_pressure = []
+    if not isinstance(market_pressure, list):
+        market_pressure = []
+
+    dist_hits = [tag for tag in cfg.OBJECTIVE_PATH_TAGS if tag in dist_pressure]
+    market_hits = [tag for tag in cfg.OBJECTIVE_MARKET_CONFIRM_TAGS if tag in market_pressure]
+
+    if dist_hits and market_hits:
+        return (
+            float(cfg.OBJECTIVE_PATH_CONFIRMATION_BONUS),
+            f"path={dist_hits}; market={market_hits}",
+        )
+    return 0.0, "no objective path+market confirmation"
+
+
+# =============================================================================
 # 子分函数注册表（scorer.py 用此遍历）
 # =============================================================================
 SCORERS = {

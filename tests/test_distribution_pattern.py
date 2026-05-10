@@ -58,10 +58,8 @@ from alphaflow.components.processors.techniques.analyzers.distribution_pattern.c
     DV_SOURCE_SYNTHETIC,
     MIN_DAYS_FOR_PATTERN,
     TAG_CHRONIC_DISTRIBUTION_60D,
-    TAG_DOWN_DAY_VOLUME_60D,
     TAG_FAILED_RECOVERY_60D,
     TAG_PATH_DRAWDOWN_60D,
-    TAG_PATH_PERSISTENT_DOWN_60D,
     VWAP_DEV_TIERS,
     VWAP_SOURCE_AMT_VOL,
     VWAP_SOURCE_NATIVE,
@@ -310,10 +308,9 @@ def p06():
     assert "path_pressure" in out, out.keys()
     pressure = out["summary"]["pressure_signals"]
     assert TAG_PATH_DRAWDOWN_60D in pressure, pressure
-    assert TAG_PATH_PERSISTENT_DOWN_60D in pressure, pressure
-    assert TAG_DOWN_DAY_VOLUME_60D in pressure, pressure
     assert TAG_FAILED_RECOVERY_60D in pressure, pressure
     assert TAG_CHRONIC_DISTRIBUTION_60D in pressure, pressure
+    assert len(pressure) == len(set(pressure)), pressure
     path60 = out["path_pressure"]["60d"]
     assert path60["drawdown_from_peak"] <= -0.12, path60
     assert path60["down_volume_share"] >= 0.55, path60

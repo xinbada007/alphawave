@@ -183,25 +183,7 @@ class CompositeRiskScorer:
         distribution_pattern: Optional[Mapping[str, Any]],
         market_relative: Optional[Mapping[str, Any]],
     ) -> Tuple[float, str]:
-        if not scorers._is_available(distribution_pattern) or not scorers._is_available(market_relative):
-            return 0.0, "unavailable"
-
-        dist_pressure = scorers._safe_get(distribution_pattern, "summary", "pressure_signals", default=[])
-        market_pressure = scorers._safe_get(market_relative, "summary", "pressure_signals", default=[])
-        if not isinstance(dist_pressure, list):
-            dist_pressure = []
-        if not isinstance(market_pressure, list):
-            market_pressure = []
-
-        dist_hits = [tag for tag in cfg.OBJECTIVE_PATH_TAGS if tag in dist_pressure]
-        market_hits = [tag for tag in cfg.OBJECTIVE_MARKET_CONFIRM_TAGS if tag in market_pressure]
-
-        if dist_hits and market_hits:
-            return (
-                float(cfg.OBJECTIVE_PATH_CONFIRMATION_BONUS),
-                f"path={dist_hits}; market={market_hits}",
-            )
-        return 0.0, "no objective path+market confirmation"
+        return scorers.objective_path_confirmation(distribution_pattern, market_relative)
 
     # -------------------------------------------------------------------------
     # 内部：权重重分配（带 cap，分摊不下的进 unallocated）
