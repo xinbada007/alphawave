@@ -13,4 +13,5 @@ from . import volume_anomaly  # noqa: F401
 from . import distribution_pattern  # noqa: F401  # Phase 4
 from . import market_relative_anomaly  # noqa: F401  # Phase 5
 from . import flow_signals  # noqa: F401  # Phase 7（必须在 composite_risk 之前注册以使其依赖可见）
+from . import market_pressure_timeline  # noqa: F401  # Phase 9 objective event timeline
 from . import composite_risk  # noqa: F401  # Phase 6 (depends_on three upstream profiles)

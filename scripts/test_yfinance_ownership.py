@@ -2,6 +2,12 @@ import asyncio
 from openbb import obb
 import pandas as pd
 
+try:
+    import pytest
+    pytestmark = pytest.mark.skip(reason="manual network smoke script; run directly when needed")
+except ImportError:
+    pytestmark = []
+
 async def test_hk_ownership():
     symbol = "3690.HK"
     print("\n>>> Fetching yfinance Share Stats for " + symbol)
