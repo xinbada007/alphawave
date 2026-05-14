@@ -40,7 +40,7 @@ class FundamentalCollector(BaseCollector):
             MarketType.HK: HKMarketStrategy(),
         }
         self.limit_annual = 2
-        self.limit_quarterly = 5
+        self.limit_quarterly = 9
     
     async def fetch_data(
         self, 

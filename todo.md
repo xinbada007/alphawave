@@ -27,3 +27,17 @@
 - [ ] **跨域事件关联**：事件与财务指标的关联索引（如"本季度营收下降"需指向对应 `revenue_yoy_pct`）
 - [ ] **时效权重设计**：近期事件 vs 历史事件的衰减权重，避免旧事件污染 LLM 注意力
 - [ ] **事件流的 LLM 视图**：在 `llm_view.py` 中集成事件流 section，设计合理的 token 预算
+
+## DistilledFeatures 结构优化
+
+- [ ] **统一 event_insights 容器**：考虑将 `insider_insights`、`dividend_insights`、`earnings_insights`、`analyst_consensus` 等独立字段合并为统一的 `event_insights: Dict[str, Any]` 容器，减少顶层字段碎片化，保持 Schema 的可扩展性
+
+## 数据源优化
+
+> 目标：利用数据源原生提供的高级接口，减少 MetricEngine 的重复计算负担。
+
+- [ ] **yfinance TTM 报表接口接入**：`yfinance` 原生提供了 `ttm_income_stmt` / `ttm_cashflow` 属性，可直接获取已滚动合并好的 TTM 利润表和现金流量表（美股）。目前 AlphaFlow 的 `YFinanceFetcher` 和 `OBBFetcher` 均未使用此接口，而是依赖手动拉取 4 个单季报表自行拼接 TTM。后续可考虑：
+  - 在 `YFinanceFetcher` 中新增 `ttm_income` / `ttm_cash` 任务，直接调用原生 TTM 接口
+  - 注意：OpenBB (`obb`) 的 `yfinance` provider **不支持** `period="ttm"`（已验证），因此此优化仅限原生 `yfinance` 路径
+  - 注意：`yfinance` 不提供 TTM 资产负债表（资产负债表天然是时点快照，无 TTM 概念）
+  - 价值：减少 MetricEngine 对美股的 TTM 拼接计算量，同时可作为自算 TTM 的交叉验证基准

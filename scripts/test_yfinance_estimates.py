@@ -3,6 +3,12 @@ import os
 from openbb import obb
 import pandas as pd
 
+try:
+    import pytest
+    pytestmark = pytest.mark.skip(reason="manual network smoke script; run directly when needed")
+except ImportError:
+    pytestmark = []
+
 async def test_hk_estimates():
     # 尝试去掉前导 0 的格式
     symbol = "3690.HK"

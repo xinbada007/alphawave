@@ -3,6 +3,12 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
 
+try:
+    import pytest
+    pytestmark = pytest.mark.skip(reason="manual network smoke script; run directly when needed")
+except ImportError:
+    pytestmark = []
+
 async def test_akshare_hk_hist():
     # --- 修改这里 ---
     symbol = "01810"  # 小米集团 (注意使用5位代码)

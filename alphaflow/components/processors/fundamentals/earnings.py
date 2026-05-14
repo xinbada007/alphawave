@@ -86,6 +86,21 @@ class EarningsAnalyzer:
         beat_rate = round(beat_count / total, 4) if total > 0 else None
         avg_surprise = round(surprise_sum / surprise_count, 4) if surprise_count > 0 else None
 
+        # Build clean history list for LLM
+        # MAX_HISTORY_RECORDS 限制为 8：通常代表美/A股过去 2 年的季度财报（8个季度），
+        # 或者是港股过去 4 年的半年度财报（8份中报+年报）。
+        # 这个长度在提供充足异动溯源时间轴的同时，有效防止 LLM Token 浪费与过度发散。
+        MAX_HISTORY_RECORDS = 8
+        
+        recent_history = []
+        for item in reported[:MAX_HISTORY_RECORDS]:
+            recent_history.append({
+                "date": item.get("report_date") or item.get("period_ending"),
+                "eps_est": item["eps_estimate"],
+                "eps_rep": item["reported_eps"],
+                "surprise_pct": item.get("surprise_pct")
+            })
+
         return EarningsFeature(
             earnings_status="ACTIVE",
             total_reports=total,
@@ -94,4 +109,5 @@ class EarningsAnalyzer:
             avg_surprise_pct=avg_surprise,
             consecutive_beats=consecutive,
             next_report_date=next_report_date,
+            recent_history=recent_history,
         )

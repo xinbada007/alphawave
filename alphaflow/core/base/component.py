@@ -54,6 +54,25 @@ class BaseCollector(BaseComponent[ResearchPack]):
         """
         pass
 
+    @staticmethod
+    def _unpack_pack(context: AnalysisContext, kwargs: Dict[str, Any]) -> ResearchPack:
+        """从 pipeline kwargs 中统一解出 ResearchPack。
+
+        - 若 input_data 是 ComponentOutput 且 payload 非空 → 取 payload
+        - 否则若 input_data 直接是 pack → 直接使用
+        - 都不是 → 新建空 pack（symbol=context.symbols[0]）
+
+        所有 Collector 子类应优先调用本方法，避免在 fetch_data 顶部重复 5 行解包模板。
+        """
+        input_data = kwargs.get("input_data")
+        if isinstance(input_data, ComponentOutput) and input_data.payload is not None:
+            pack = input_data.payload
+        else:
+            pack = input_data
+        if pack is None:
+            pack = ResearchPack(symbol=context.symbols[0])
+        return pack
+
 
 class BaseProcessor(BaseComponent[ResearchPack]):
     """

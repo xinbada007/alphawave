@@ -7,13 +7,15 @@ from alphaflow.components.processors.fundamentals.insider import InsiderAnalyzer
 from alphaflow.components.processors.fundamentals.scanner import scan_fundamentals
 from alphaflow.components.processors.fundamentals.dividend import DividendAnalyzer
 from alphaflow.components.processors.fundamentals.earnings import EarningsAnalyzer
+from alphaflow.components.processors.fundamentals.evaluators import EvaluatorEngine
+from alphaflow.components.processors.fundamentals.consensus import ConsensusAnalyzer
 
 # 触发全量声明式指标注册（6个域模块）
 import alphaflow.components.processors.metrics  # noqa: F401
 
 
 class FundamentalProcessor(BaseProcessor):
-    """基本面与估值调度器 — 纯编排器架构"""
+    """基本面与估值调度器 — 纯编排器架构（零业务逻辑）"""
 
     def __init__(self, name: str, config: Optional[Dict[str, Any]] = None):
         super().__init__(name, config)
@@ -26,14 +28,19 @@ class FundamentalProcessor(BaseProcessor):
             
         print(f"  [{self.name}] Distilling fundamental features for {pack.symbol}...")
         
-        # 1. 发动声明式指标引擎（含 profitability/solvency/efficiency/quality/growth/valuation）
+        # ==========================================
+        # 优雅的三层架构 (The 3-Layer Architecture)
+        # ==========================================
+        
+        # 1. 检验科 (Metrics) — 纯数值提取，无任何定性判断
         facade = to_facade(pack)
         MetricEngine.execute_all(facade, pack)
         
-        # 2. trend_status 元判定（读已算的 trend_delta 域做联合裁决）
-        self._synthesize_trend_status(pack)
+        # 2. 主治医师 (Evaluator/Tagging) — 基于本域指标下发必须的分类诊断
+        # 这将自动触发 trend_status, (未来) solvency_verdict 等标签逻辑
+        EvaluatorEngine.evaluate_all(pack)
 
-        # 3. 跨域扫描器：从已算指标中检测跨表事实信号
+        # 3. 会诊室 (Scanner) — 跨域复杂病理信号检测 (事件/异象抓取)
         if pack.distilled_features.fundamental_metrics:
             signals = scan_fundamentals(pack.distilled_features.fundamental_metrics)
             # 🚀 显式赋值替代原地变异，与 exclude_unset=True 兼容
@@ -49,7 +56,8 @@ class FundamentalProcessor(BaseProcessor):
         # 6. 财报超预期分析
         pack.distilled_features.earnings_insights = EarningsAnalyzer.analyze(pack)
 
-        # 7. 向黑板宣告：隐匿原始脏时序
+        # 7. 分析师共识
+        pack.distilled_features.analyst_consensus = ConsensusAnalyzer.analyze(pack)
         from alphaflow.core.context import GlobalContext
         is_debug = GlobalContext().get("DEBUG", False)
         
@@ -59,33 +67,7 @@ class FundamentalProcessor(BaseProcessor):
             pack.registry.claim_domain("earnings_calendar")
             pack.registry.claim_domain("management_history")
             pack.registry.claim_domain("splits_history")
+            pack.registry.claim_domain("estimates")
 
         return ComponentOutput(success=True, payload=pack)
 
-    @staticmethod
-    def _synthesize_trend_status(pack: ResearchPack):
-        """
-        趋势方向元判定：读取 MetricEngine 已算出的 trend_delta 域的百分点 delta，
-        联合投票决定 IMPROVING / DECLINING / MIXED。
-        """
-        metrics = pack.distilled_features.fundamental_metrics or {}
-        td = metrics.get("trend_delta", {})
-        if not td:
-            return
-
-        deltas = [v for k, v in td.items() if k.endswith("_delta") and isinstance(v, (int, float))]
-        if not deltas:
-            return
-
-        improving = sum(1 for d in deltas if d > 0.005)
-        declining = sum(1 for d in deltas if d < -0.005)
-
-        if improving > declining:
-            td["trend_status"] = "IMPROVING"
-        elif declining > improving:
-            td["trend_status"] = "DECLINING"
-        else:
-            td["trend_status"] = "MIXED"
-
-        metrics["trend_delta"] = td
-        pack.distilled_features.fundamental_metrics = metrics

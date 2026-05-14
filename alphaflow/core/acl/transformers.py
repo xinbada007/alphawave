@@ -320,3 +320,35 @@ def _tx_extract_dividend_amount(val: Any, raw: Dict[str, Any]) -> Optional[float
         return None
     total = sum(float(a) for a in amounts)
     return round(total / per_share, 4) if per_share > 0 else None
+
+
+def _tx_calc_net_working_capital(val: Any, raw: Dict[str, Any]) -> Optional[float]:
+    """
+    [Virtual Field] 合成 NET_WORKING_CAPITAL（净营运资金）
+
+    OBB/YFinance 不直接提供此字段，故以虚拟字段方式从 raw 中推导。
+    - Native-first：先尝试取 raw 中的 net_working_capital（前瞻性防御，
+      如果 OBB/YFinance 未来上线此字段，可直接使用）
+    - Fallback：从 total_current_assets - current_liabilities 推导
+
+    数学恒等式：NWC ≡ Current Assets - Current Liabilities
+    （CAS / IFRS / US GAAP 三大会计准则下均成立）
+    """
+    # 1. Native-first (future-proof)
+    native = raw.get("net_working_capital")
+    if native is not None:
+        try:
+            return float(native)
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Fallback: 从基础子项推导
+    ca = raw.get("total_current_assets")
+    cl = raw.get("current_liabilities")
+    if ca is not None and cl is not None:
+        try:
+            return float(ca) - float(cl)
+        except (ValueError, TypeError):
+            pass
+
+    return None

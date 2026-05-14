@@ -2,6 +2,7 @@
 Helpers - 辅助函数模块
 包含汇率获取、货币审计等工具函数
 """
+
 from typing import Any, Dict, Optional
 import asyncio
 import akshare as ak  # type: ignore
@@ -15,11 +16,11 @@ from alphaflow.core.keys import Key
 async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[float]:
     """
     从 AkShare 获取实时汇率
-    
+
     Args:
         from_currency: 源币种 (如 "HKD", "USD")
         to_currency: 目标币种 (默认 CNY)
-    
+
     Returns:
         汇率值，如果获取失败返回 None
     """
@@ -28,7 +29,10 @@ async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[
             # 百度源实时行情 - HKD/CNY
             df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
             # 修复：使用"港币"而非"港元"，同时检查代码列作为备选
-            subset = df[df["名称"].str.contains("港币", na=False) | df["代码"].str.contains("HKD", na=False)]
+            subset = df[
+                df["名称"].str.contains("港币", na=False)
+                | df["代码"].str.contains("HKD", na=False)
+            ]
             if not subset.empty:
                 # 接口返回的是 CNY/HKD (1人民币兑多少港元)
                 cny_to_hkd = float(subset.iloc[0]["最新价"])
@@ -38,7 +42,10 @@ async def get_fx_rate(from_currency: str, to_currency: str = "CNY") -> Optional[
             # 百度源实时行情 - USD/CNY
             df = await asyncio.to_thread(ak.fx_quote_baidu, symbol="人民币")
             # 同时检查名称和代码列，更加健壮
-            subset = df[df["名称"].str.contains("美元", na=False) | df["代码"].str.contains("USD", na=False)]
+            subset = df[
+                df["名称"].str.contains("美元", na=False)
+                | df["代码"].str.contains("USD", na=False)
+            ]
             if not subset.empty:
                 # 接口返回的是 CNY/USD (1人民币兑多少美元)
                 cny_to_usd = float(subset.iloc[0]["最新价"])
@@ -84,10 +91,14 @@ async def resolve_fx_rate(
         math_factor = currency_ctx.get("alignment_factor", 1.0)
         if market_type == MarketType.HK and 0.8 <= math_factor <= 1.1:
             fx_rate = math_factor
-            print(f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}")
+            print(
+                f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}"
+            )
         elif market_type == MarketType.US and 6.0 <= math_factor <= 8.5:
             fx_rate = math_factor
-            print(f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}")
+            print(
+                f"  [Currency] Live API failed, fallback to Math Factor: {fx_rate:.4f}"
+            )
 
     return fx_rate
 
@@ -96,25 +107,25 @@ async def resolve_fx_rate(
 # 3. 货币错配审计
 # ==========================================
 def audit_currency_context(
-    metrics: Dict[str, Any], 
+    metrics: Dict[str, Any],
     ttm_financials: Dict[str, Optional[float]],
-    market_type: MarketType = MarketType.UNKNOWN
+    market_type: MarketType = MarketType.UNKNOWN,
 ) -> Dict[str, Any]:
     """
     双层审计机制：
     1. 元数据审计 (Metadata Audit): 直接检查原始字段名的币种标签 (针对 AkShare)。
     2. 数学审计 (Math Audit): PE/PB 锚点对撞 (针对 YFinance/通用)。
     """
-    
+
     market_to_currency = {
         MarketType.US: "USD",
         MarketType.HK: "HKD",
         MarketType.CN: "CNY",
-        MarketType.UNKNOWN: "UNKNOWN"
+        MarketType.UNKNOWN: "UNKNOWN",
     }
     # 获取默认货币字符串 (如 "USD")
     default_curr = market_to_currency.get(market_type, "UNKNOWN")
-    
+
     audit_report = {
         "is_misaligned": False,
         "reporting_currency": default_curr,
@@ -126,7 +137,7 @@ def audit_currency_context(
         "llm_instruction": (
             "If the currency is misaligned, a real-time fx_rate is given and because it is REALTIME FX rate. "
             "Do NOT apply the REALTIME FX rate to analyze historical (e.g. 2-year or 3-year) growth rates. "
-        )
+        ),
     }
 
     if not metrics:
@@ -145,7 +156,7 @@ def audit_currency_context(
         audit_report["reporting_currency"] = "CNY"
         audit_report["trading_currency"] = "HKD"
         audit_report["audit_method"] = "Metadata_Label_Check"
-        
+
         # 给一个初始因子，后续数学审计可以微调它
         audit_report["alignment_factor"] = 0.90
 
@@ -156,10 +167,10 @@ def audit_currency_context(
     market_cap = metrics.get(Key.metrics.MARKET_CAP)
     api_pe = metrics.get(Key.metrics.PE_RATIO)
     api_pb = metrics.get(Key.metrics.PRICE_TO_BOOK)
-    
+
     # TTM 数据
-    ni_ttm = ttm_financials.get('net_income') if ttm_financials else None
-    equity = ttm_financials.get('total_equity') if ttm_financials else None
+    ni_ttm = ttm_financials.get("net_income") if ttm_financials else None
+    equity = ttm_financials.get("total_equity") if ttm_financials else None
 
     math_factor = None
     math_method = "None"
@@ -181,29 +192,29 @@ def audit_currency_context(
     # =========================================================
     # 第三层：综合判定 (Synthesis)
     # =========================================================
-    
+
     if math_factor:
         # 如果数学因子存在，我们用它来做最终判定
-        
+
         # 1. 港股特殊修正：如果元数据已经判定错配，且数学因子在 0.85~1.05 之间
         # 说明数学因子验证了 0.92 左右的汇率差
         if audit_report["detected_gap"] == "HKD_CNY_MISMATCH_BY_LABEL":
-             # 信任数学因子的精确度
-             audit_report["alignment_factor"] = round(math_factor, 4)
-             audit_report["audit_method"] += f" + {math_method}"
-             audit_report["warning_message"] = (
+            # 信任数学因子的精确度
+            audit_report["alignment_factor"] = round(math_factor, 4)
+            audit_report["audit_method"] += f" + {math_method}"
+            audit_report["warning_message"] = (
                 f"CONFIRMED: Currency mismatch (Labels + Math). "
                 f"Financials in CNY, Market Cap in HKD. "
                 f"Adjustment Factor: {math_factor:.4f}."
-             )
-             if 0.9 <= math_factor <= 1.1:
-                 audit_report["warning_message"] = (
+            )
+            if 0.95 <= math_factor <= 1.05:
+                audit_report["warning_message"] = (
                     f"DETECTED: Mixed Unit Calculation. Labels show HKD/CNY mismatch, "
                     f"but Math Factor ({math_factor:.4f}) is ~1.0. This implies the API may uses "
                     f"Mixed Units (HKD Price / CNY Earnings) without FX conversion."
                     f"Value is numerically consistent but implies an ~8% FX valuation bias."
-                 )
-             return audit_report
+                )
+            return audit_report
 
         # 2. 常规逻辑 (YFinance / 无标签情况)
         audit_report["alignment_factor"] = round(math_factor, 4)
@@ -215,31 +226,39 @@ def audit_currency_context(
             audit_report["detected_gap"] = "USD_CNY_MISMATCH"
             audit_report["reporting_currency"] = "CNY"
             audit_report["trading_currency"] = "USD"
-            audit_report["warning_message"] = f"CRITICAL: USD/CNY Mismatch (Factor: {math_factor:.2f})."
-        
+            audit_report["warning_message"] = (
+                f"CRITICAL: USD/CNY Mismatch (Factor: {math_factor:.2f})."
+            )
+
         # --- 港股专用：HKD/CNY 错配阈值 (0.8 ~ 0.98) ---
         elif market_type == MarketType.HK and 0.8 <= math_factor <= 0.98:
             audit_report["is_misaligned"] = True
             audit_report["detected_gap"] = "HKD_CNY_MISMATCH"
             audit_report["reporting_currency"] = "CNY"
             audit_report["trading_currency"] = "HKD"
-            audit_report["warning_message"] = f"ALERT: HKD/CNY Mismatch (Factor: {math_factor:.2f})."
-        
+            audit_report["warning_message"] = (
+                f"ALERT: HKD/CNY Mismatch (Factor: {math_factor:.2f})."
+            )
+
         # --- 美股专用：ADS 错配阈值 (> 20) ---
         elif market_type == MarketType.US and math_factor > 20.0:
             audit_report["is_misaligned"] = True
             audit_report["detected_gap"] = "ADS_MISMATCH"
-            audit_report["warning_message"] = f"CRITICAL: ADS Ratio Mismatch (Factor: {math_factor:.2f})."
-        
+            audit_report["warning_message"] = (
+                f"CRITICAL: ADS Ratio Mismatch (Factor: {math_factor:.2f})."
+            )
+
         else:
             # 因子在 0.98 ~ 1.1 之间或非港股/美股，认为是噪音，判定为对齐
             audit_report["is_misaligned"] = False
             audit_report["detected_gap"] = "ALIGNED"
-            audit_report["alignment_factor"] = 1.0 # 重置为 1.0 以免误修
+            audit_report["alignment_factor"] = 1.0  # 重置为 1.0 以免误修
             audit_report["warning_message"] = "Data appears aligned."
 
     # 如果没有数学因子，但元数据判定错配，直接返回元数据结论
     elif audit_report["detected_gap"] != "NONE":
-        audit_report["warning_message"] = "WARNING: Mismatch detected by labels, but math validation unavailable (PE/PB missing)."
+        audit_report["warning_message"] = (
+            "WARNING: Mismatch detected by labels, but math validation unavailable (PE/PB missing)."
+        )
 
     return audit_report

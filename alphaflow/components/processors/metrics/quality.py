@@ -142,8 +142,36 @@ def calc_cash_to_assets(cash: float, assets: float) -> Optional[float]:
     ]
 )
 def calc_core_profit_ratio(oi: float, pretax: float) -> Optional[float]:
-    """营业利润 / 税前利润 — 核心利润占比，越接近1越健康"""
+    """营业利润 / 税前利润 — 核心利润占比（法定口径），越接近1越健康"""
     return round(oi / pretax, 4) if pretax != 0 else None
+
+
+@MetricEngine.fundamental_metric(
+    feature_name="core_profit_ratio_ex_non_recurring",
+    domain=DOMAIN_EARNINGS_QUALITY,
+    depends_on=[
+        ("LATEST", "income", Key.income.OPERATING_INCOME),
+        ("LATEST", "income", Key.income.PRETAX_INCOME),
+    ],
+    optional_depends_on=[
+        ("LATEST", "income", Key.income.REVALUATION_SURPLUS),
+        ("LATEST", "income", Key.income.OTHER_GAINS_AND_LOSSES),
+        ("LATEST", "income", Key.income.OTHER_INCOME),
+    ]
+)
+def calc_core_profit_ratio_ex_nr(
+    oi: float, pretax: float,
+    reval: Optional[float], other_gains: Optional[float], other_inc: Optional[float]
+) -> Optional[float]:
+    """
+    (营业利润 - 重估盈余 - 其他收益 - 其他收入) / 税前利润
+    IFRS 非经常性损益探测器：剥离计入营业利润之上的纸面公允价值变动。
+    美股该指标通常等同于 core_profit_ratio；港股若与原指标出现巨额敞口，即代表利润水分。
+    """
+    if pretax == 0:
+        return None
+    pure_oi = oi - (reval or 0.0) - (other_gains or 0.0) - (other_inc or 0.0)
+    return round(pure_oi / pretax, 4)
 
 
 # ==========================================

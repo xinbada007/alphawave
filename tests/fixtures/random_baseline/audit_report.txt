@@ -1,0 +1,103 @@
+========================================================================================================================
+Random Baseline Audit — 400 anchors vs ProxyTruth R4
+========================================================================================================================
+Total rows: 400  OK: 398  Status: {'OK': 398, 'NO_ANCHOR': 2}
+ProxyTruth intensity counts: {'NONE': 259, 'MILD': 109, 'STRONG': 30}
+Anchor source counts: {'rich_202408': 34, 'rich_202003': 39, 'random': 236, 'rich_202107': 45, 'rich_202204': 44}
+
+Binary truth: ProxyTruth.is_distribution == TRUE (STRONG or MILD)
+Product positive(score): composite_risk.score >= 45.0
+Product positive(level): composite_risk.level in {ELEVATED,HIGH,CRITICAL}
+
+Confusion — score threshold
+  TP=19 FP=28 TN=231 FN=120
+  precision=40.4% recall=13.7% specificity=89.2% f1=20.4%
+
+Confusion — level threshold
+  TP=5 FP=4 TN=255 FN=134
+  precision=55.6% recall=3.6% specificity=98.5% f1=6.8%
+
+ROC by composite_risk.score threshold
+  threshold   TPR(recall)   FPR      TP  FP  TN  FN
+        0.0       100.0%   100.0%   139 259   0   0
+       20.0        56.1%    59.5%    78 154 105  61
+       27.5        38.8%    41.7%    54 108 151  85
+       35.0        25.9%    30.1%    36  78 181 103
+       45.0        13.7%    10.8%    19  28 231 120
+       55.0         7.2%     6.6%    10  17 242 129
+       65.0         5.0%     2.7%     7   7 252 132
+       75.0         2.9%     1.2%     4   3 256 135
+
+By market — score threshold
+  market   n   truth+  pred+   precision recall specificity
+  US     199      63     27     40.7%  17.5%       88.2%
+  HK     119      43     16     37.5%  14.0%       86.8%
+  CN      80      33      4     50.0%   6.1%       95.7%
+
+By source — score threshold
+  source       n   truth+  pred+   precision recall specificity
+  random      236      82     21     42.9%  11.0%       92.2%
+  rich_202003  39      11     11     27.3%  27.3%       71.4%
+  rich_202107  45      18      6     66.7%  22.2%       92.6%
+  rich_202204  44      16      3     33.3%   6.2%       92.9%
+  rich_202408  34      12      6     33.3%  16.7%       81.8%
+
+Top false negatives (ProxyTruth TRUE, product score < threshold)
+  ticker anchor market src truth score level abs_dd excess_dd p volR neg%
+  0883.HK  2020-02-17 HK random      STRONG 30.56 MODERATE -47.8% -25.4% 0.001 2.54 51.7%
+  0017.HK  2022-08-22 HK random      STRONG 21.67 LOW      -41.7% -16.4% 0.001 2.00 58.3%
+  META     2021-11-26 US rich_202107 STRONG 30.0  MODERATE -40.4% -32.4% 0.001 1.71 60.0%
+  INTC     2024-06-24 US random      STRONG 31.67 MODERATE -38.2% -33.5% 0.014 1.73 51.7%
+  603259.SS 2021-11-18 CN rich_202107 STRONG 34.44 MODERATE -36.6% -30.7% 0.035 1.29 50.0%
+  603259.SS 2021-11-12 CN rich_202107 STRONG 21.67 LOW      -35.5% -28.7% 0.048 1.23 50.0%
+  6098.HK  2021-05-10 HK random      STRONG 21.67 LOW      -35.2% -22.9% 0.001 1.54 56.7%
+  0291.HK  2022-09-27 HK random      STRONG 0.0   LOW      -33.5% -15.7% 0.056 1.31 58.3%
+  SNOW     2024-05-13 US random      STRONG 40.56 MODERATE -29.5% -28.8% 0.149 1.21 48.3%
+  2318.HK  2021-07-20 HK rich_202107 STRONG 30.0  MODERATE -28.8% -16.7% 0.003 1.28 51.7%
+  NVDA     2021-12-06 US random      STRONG 31.67 MODERATE -26.9% -18.9% 0.023 1.55 51.7%
+  BA       2023-12-13 US random      STRONG 0.0   LOW      -26.6% -25.9% 0.007 1.72 60.0%
+  CVS      2024-10-28 US random      STRONG 11.67 LOW      -23.7% -21.6% 0.149 1.28 46.7%
+  6160.HK  2023-12-29 HK random      STRONG 0.0   LOW      -23.4% -11.2% 0.231 1.20 50.0%
+  000725.SZ 2020-01-23 CN random      STRONG 35.0  MODERATE -22.4% -18.5% 0.051 1.21 50.0%
+  600519.SS 2021-07-05 CN rich_202107 STRONG 21.67 LOW      -22.4% -15.8% 0.043 1.34 60.0%
+  600036.SS 2022-03-31 CN random      STRONG 0.0   LOW      -22.1% -11.7% 0.120 1.47 50.0%
+  BA       2024-02-08 US random      STRONG 38.0  MODERATE -21.5% -20.6% 0.118 1.23 61.7%
+  RTX      2023-06-14 US random      STRONG 31.67 MODERATE -20.6% -19.3% 0.009 1.48 58.3%
+  SNOW     2023-12-21 US random      STRONG 0.0   LOW      -20.6% -19.4% 0.192 1.29 55.0%
+  9888.HK  2022-04-14 HK random      STRONG 11.67 LOW      -20.5% -10.5% 0.555 1.82 51.7%
+  INTC     2020-07-15 US random      STRONG 0.0   LOW      -19.1% -18.8% 0.163 1.46 48.3%
+  9988.HK  2020-12-01 HK random      STRONG 42.44 MODERATE -18.4% -16.7% 0.123 1.28 53.3%
+  0017.HK  2024-08-26 HK rich_202408 STRONG 44.11 MODERATE -17.2% -13.3% 0.665 1.73 50.0%
+  1024.HK  2021-10-04 HK rich_202107 STRONG 21.67 LOW      -16.0% -10.7% 0.908 1.34 55.0%
+
+Top false positives (ProxyTruth FALSE, product score >= threshold)
+  ticker anchor market src score level abs_dd excess_dd p volR neg%
+  0489.HK  2020-11-09 HK random      81.67 HIGH     -6.0% -6.0% 0.738 2.52 53.3%
+  0883.HK  2021-01-04 HK random      79.67 HIGH     +0.0% +0.0% 1.000 3.50 55.0%
+  PFE      2020-03-11 US rich_202003 75.22 HIGH     -11.4% +7.3% 0.354 1.31 48.3%
+  MRK      2021-02-08 US random      70.78 MODERATE -3.8% -0.3% 0.802 1.22 46.7%
+  CAT      2020-03-13 US rich_202003 66.33 MODERATE -7.8% +9.4% 0.651 1.33 43.3%
+  META     2024-08-01 US rich_202408 66.11 MODERATE -4.4% +0.3% 0.534 0.72 45.0%
+  KO       2020-03-23 US random      65.56 ELEVATED +0.0% +0.0% 1.000 1.59 51.7%
+  9618.HK  2021-07-26 HK rich_202107 64.11 MODERATE -9.7% -1.2% 0.490 1.03 46.7%
+  0688.HK  2022-08-16 HK rich_202204 64.11 MODERATE -27.2% -1.3% 0.060 1.05 53.3%
+  0992.HK  2021-08-12 HK rich_202107 63.89 MODERATE -7.4% +2.2% 0.504 0.82 43.3%
+  300750.SZ 2024-08-01 CN rich_202408 62.44 MODERATE -6.3% +1.3% 0.724 1.30 53.3%
+  T        2020-03-12 US rich_202003 58.33 MODERATE -14.5% -4.4% 0.029 1.44 43.3%
+  UPS      2020-03-12 US random      58.33 MODERATE +0.0% +10.1% 1.000 1.57 50.0%
+  0992.HK  2023-12-05 HK random      57.22 MODERATE -11.1% -2.7% 0.284 1.35 45.0%
+  DIS      2024-08-09 US rich_202408 56.11 MODERATE -0.7% -0.7% 0.878 0.68 43.3%
+  QCOM     2020-03-11 US rich_202003 55.22 MODERATE -18.4% +0.4% 0.193 0.91 50.0%
+  FCX      2020-03-19 US rich_202003 55.22 MODERATE -6.1% +1.2% 0.836 1.16 41.7%
+  ORCL     2022-05-19 US random      54.44 MODERATE -4.5% +1.6% 0.748 0.79 50.0%
+  DIS      2020-10-28 US random      53.56 MODERATE +0.0% +0.0% 1.000 0.83 45.0%
+  6098.HK  2024-08-23 HK rich_202408 48.56 MODERATE -4.2% -1.4% 0.904 1.27 50.0%
+  SHOP     2020-03-09 US rich_202003 47.78 MODERATE -23.0% -4.3% 0.043 1.76 40.0%
+  1398.HK  2022-11-14 HK random      47.44 MODERATE -0.5% +1.3% 0.932 1.31 40.0%
+  1299.HK  2022-01-20 HK random      47.22 MODERATE -19.3% +6.9% 0.088 1.22 51.7%
+  0291.HK  2020-03-16 HK rich_202003 47.22 MODERATE -4.2% +1.8% 0.652 1.46 45.0%
+  601628.SS 2022-04-01 CN rich_202204 46.11 MODERATE -10.7% +0.8% 0.477 1.01 48.3%
+
+CSV: /data/dev/alphawave/scripts/../tests/fixtures/random_baseline/audit_results.csv
+Report: /data/dev/alphawave/scripts/../tests/fixtures/random_baseline/audit_report.txt
+========================================================================================================================

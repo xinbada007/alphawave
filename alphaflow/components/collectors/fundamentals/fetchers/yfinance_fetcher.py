@@ -30,7 +30,9 @@ class YFinanceFetcher(BaseFetcher):
     
     async def _fetch_raw(self, task_name: str, symbol: str, **kwargs) -> List[Dict]:
         """任务翻译官：将标准化任务名翻译为 yfinance 调用"""
-        limit = kwargs.get("limit", 8)  # 默认 8 条，与旧架构一致
+        # DEFAULT_EARNINGS_LIMIT 默认提取 8 份财报（匹配 2 年季度/4 年半年度回溯基准）
+        DEFAULT_EARNINGS_LIMIT = 8
+        limit = kwargs.get("limit", DEFAULT_EARNINGS_LIMIT)
         
         if task_name == "splits":
             return await self._fetch_splits(symbol)
